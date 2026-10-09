@@ -138,13 +138,14 @@ uint8_t board_can_configure(unsigned ch,uint32_t nominal,uint32_t data_rate,uint
     init.AutoRetransmission=ENABLE;
     init.TransmitPause=DISABLE;
     init.ProtocolException=ENABLE;
-    /* 三路共享 2560 个 word；每路 608 word，保留间隔，绝不能从同一地址开始。 */
-    init.MessageRAMOffset=ch*640U;
+    /* 两个专用电机 Tx buffer 加上透传 FIFO，每路 644 word，三路独立分区。 */
+    init.MessageRAMOffset=ch*704U;
     init.RxFifo0ElmtsNbr=16;
     init.RxFifo0ElmtSize=FDCAN_DATA_BYTES_64;
     init.RxFifo1ElmtSize=FDCAN_DATA_BYTES_64;
     init.RxBufferSize=FDCAN_DATA_BYTES_64;
     init.TxEventsNbr=16;
+    init.TxBuffersNbr=2;
     init.TxFifoQueueElmtsNbr=CAN_TX_SLOTS;
     init.TxFifoQueueMode=FDCAN_TX_FIFO_OPERATION;
     init.TxElmtSize=FDCAN_DATA_BYTES_64;

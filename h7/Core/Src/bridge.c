@@ -1,6 +1,7 @@
 #include "bridge.h"
 #include "board.h"
 #include "protocol.h"
+#include "motor.h"
 #include "usbd_cdc_if.h"
 #include <string.h>
 
@@ -73,6 +74,7 @@ static void tx_result(unsigned ch,pending_tx_t *tx,uint8_t status)
 static uint8_t restart(unsigned ch,uint8_t report)
 {
     channel_t *c=&channels[ch];
+    motor_bus_reset(ch+1U);
     /* Stop 后重新配置会清空硬件 FIFO，避免旧请求在重连或切换速率后继续发送。 */
     uint8_t status=board_can_state(ch,0);
     if (status) return status;
@@ -108,6 +110,7 @@ static uint8_t send_can(const proto_packet_t *p,unsigned ch)
     FDCAN_HandleTypeDef *h=&board_can[ch];
     if (p->length<5 || (p->flags & ~(FLAG_EXT|FLAG_RTR|FLAG_FD|FLAG_BRS))) return STATUS_INVALID;
     uint32_t id=proto_get_u32(p->payload);
+    if (!(p->flags&FLAG_EXT) && motor_reserved_id(ch+1U,id)) return STATUS_BUSY;
     uint8_t length=p->payload[4];
     int dlc=proto_length_to_dlc(length);
     if (dlc<0 || (!(p->flags&FLAG_FD) && length>8) ||
@@ -149,7 +152,7 @@ static void dispatch(const proto_packet_t *p)
     out.payload[0]=p->type;
     uint8_t status=STATUS_INVALID;
     if (p->type==CMD_INFO && p->channel==0 && !p->flags && !p->length) {
-        static const uint8_t info[]={1,0,0,3,64,16,0x0f,0,'D','M','-','H','7','2','3'};
+        static const uint8_t info[]={1,1,0,3,64,16,0x1f,0,'D','M','-','H','7','2','3'};
         memcpy(out.payload+2,info,sizeof(info));
         out.length+=sizeof(info);
         status=STATUS_OK;
@@ -157,6 +160,8 @@ static void dispatch(const proto_packet_t *p)
         memcpy(out.payload+2,p->payload,p->length);
         out.length+=p->length;
         status=STATUS_OK;
+    } else if (p->type>=CMD_MOTOR_POSITION && p->type<=CMD_MOTOR_ZERO) {
+        status=motor_command(p,&out,HAL_GetTick());
     } else if (p->channel>=1 && p->channel<=CAN_CHANNELS) {
         unsigned ch=p->channel-1U;
         channel_t *c=&channels[ch];
@@ -214,7 +219,6 @@ static void poll_can(unsigned ch)
         uint8_t data[64];
         if (HAL_FDCAN_GetRxMessage(h,FDCAN_RX_FIFO0,&rx,data)!=HAL_OK) break;
         ++c->rx;
-        if (!usb_active) { ++c->rx_drop; continue; }
         proto_packet_t out={.type=MSG_RX,.channel=(uint8_t)(ch+1),.sequence=rx_sequence++};
         if (rx.IdType==FDCAN_EXTENDED_ID) out.flags|=FLAG_EXT;
         if (rx.RxFrameType==FDCAN_REMOTE_FRAME) out.flags|=FLAG_RTR;
@@ -223,6 +227,9 @@ static void poll_can(unsigned ch)
         if (rx.ErrorStateIndicator==FDCAN_ESI_PASSIVE) out.flags|=FLAG_ESI;
         uint8_t length=proto_dlc_to_length((uint8_t)rx.DataLength);
         if (!(out.flags&FLAG_FD) && length>8) length=8;
+        /* 电机反馈先交给本地闭环，不能受 USB 是否打开或上报队列容量影响。 */
+        motor_receive(ch+1U,rx.Identifier,out.flags,data,length,now);
+        if (!usb_active) { ++c->rx_drop; continue; }
         proto_put_u32(out.payload,rx.Identifier);
         proto_put_u32(out.payload+4,board_micros());
         out.payload[8]=length;
@@ -286,6 +293,7 @@ static void poll_usb_tx(void)
 void bridge_poll(void)
 {
     if (seen_epoch!=session_epoch) {
+        motor_stop(3,MOTOR_FAULT_HOST);
         seen_epoch=session_epoch;
         parser.used=0;
         parser.discarding=false;
@@ -304,6 +312,7 @@ void bridge_poll(void)
         proto_packet_t p;
         if (proto_feed(&parser,byte,&p)) dispatch(&p);
     }
+    motor_poll(HAL_GetTick(),usb_active && seen_epoch==session_epoch);
     cdc_poll();
     poll_usb_tx();
 }

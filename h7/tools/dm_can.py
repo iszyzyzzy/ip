@@ -5,6 +5,7 @@ import argparse
 from collections import deque
 from dataclasses import dataclass
 import json
+import math
 import struct
 import sys
 import time
@@ -13,10 +14,14 @@ VERSION = 1
 MAX_PAYLOAD = 80
 MAX_WIRE = 92
 INFO, CONFIG, STATE, TX, STATS, PING = range(1, 7)
+MOTOR_POSITION, MOTOR_STATUS, MOTOR_STOP, MOTOR_TUNE, MOTOR_ZERO = range(0x10, 0x15)
 ACK, RX, TX_RESULT = 0x80, 0x81, 0x82
 EXT, RTR, FD, BRS, ESI = 1, 2, 4, 8, 16
 STATUS_NAMES = ('成功', '参数无效', '队列忙或通道未关闭', '通道关闭或只听',
-                'HAL 错误', '发送超时', '已取消', 'bus-off')
+                'HAL 错误', '发送超时', '已取消', 'bus-off', '电机反馈、参考零点或驱动状态无效')
+MOTOR_STATES = ('停止', '等待使能反馈', '位置控制', '故障停止')
+MOTOR_FAULTS = ('无', '反馈超时或失去使能', '驱动故障', '总线不可用', '发送阻塞',
+                'CDC 断开', '控制周期超时', '位置参考失效', '温度超限')
 NOMINAL_RATES = (50000, 100000, 125000, 250000, 500000, 800000, 1000000)
 DATA_RATES = (1000000, 2000000, 3000000, 4000000, 5000000, 6000000, 8000000)
 DLC_LENGTHS = (0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 16, 20, 24, 32, 48, 64)
@@ -247,6 +252,51 @@ class Bridge:
             raise IOError('统计响应长度错误')
         return dict(zip(STAT_NAMES, struct.unpack('<' + 'I' * len(STAT_NAMES), data)))
 
+    def motor_position(self, gm: float | None = None, dm: float | None = None, channel: int = 1):
+        """目标单位为 rad；省略的电机维持原状态，串口保持打开期间持续闭环。"""
+        if gm is None and dm is None:
+            raise ValueError('至少指定一个电机的位置')
+        if any(not math.isfinite(v) for v in (gm, dm) if v is not None):
+            raise ValueError('位置必须是有限数值')
+        mask = int(gm is not None) | (int(dm is not None) << 1)
+        self.request(MOTOR_POSITION, channel, struct.pack('<Bff', mask, gm or 0.0, dm or 0.0))
+
+    def motor_status(self, channel: int = 1) -> dict:
+        _, data = self.request(MOTOR_STATUS, channel)
+        if len(data) != 68:
+            raise IOError('电机状态长度错误')
+        result = {}
+        for offset, name, unit in ((0, 'gm6020', 'A'), (32, 'dm4310', 'Nm')):
+            motor, state, fault, temperature, position, velocity, effort, target, output, age, failures = struct.unpack_from('<BBBBfffffII', data, offset)
+            if motor != offset // 32 + 1 or state >= len(MOTOR_STATES) or fault >= len(MOTOR_FAULTS):
+                raise IOError('电机状态字段无效')
+            result[name] = {'state': MOTOR_STATES[state], 'fault': MOTOR_FAULTS[fault],
+                            'temperature_c': temperature, 'position_rad': position,
+                            'position_deg': math.degrees(position), 'velocity_rad_s': velocity,
+                            'effort': effort, 'target_rad': target, 'output': output,
+                            'effort_unit': unit, 'feedback_age_ms': None if age == 0xFFFFFFFF else age,
+                            'tx_failures': failures}
+        result['missed_control_ticks'] = struct.unpack_from('<I', data, 64)[0]
+        return result
+
+    def motor_stop(self, mask: int = 3, channel: int = 1):
+        if mask not in (1, 2, 3):
+            raise ValueError('电机掩码必须为 1、2 或 3')
+        self.request(MOTOR_STOP, channel, bytes([mask]))
+
+    def motor_zero(self, mask: int = 3, channel: int = 1):
+        if mask not in (1, 2, 3):
+            raise ValueError('电机掩码必须为 1、2 或 3')
+        self.request(MOTOR_ZERO, channel, bytes([mask]))
+
+    def motor_tune(self, motor: int, position_kp: float, velocity_kp: float,
+                   velocity_ki: float, max_velocity: float, max_output: float,
+                   max_position: float = 12.5, channel: int = 1):
+        values = (position_kp, velocity_kp, velocity_ki, max_velocity, max_output, max_position)
+        if motor not in (1, 2) or any(not math.isfinite(v) or v < 0 for v in values):
+            raise ValueError('电机编号或控制参数无效')
+        self.request(MOTOR_TUNE, channel, struct.pack('<B6f', motor, *values))
+
     def send(self, channel: int, can_id: int, data: bytes = b'', *, extended: bool = False,
              fd: bool = False, brs: bool = False, remote_length: int | None = None,
              wait: bool = True) -> int:
@@ -305,6 +355,23 @@ def main():
     monitor.add_argument('--seconds', type=float, default=0)
     loop = commands.add_parser('loopback', help='三路内部回环检查')
     loop.add_argument('--fd', action='store_true')
+    position = commands.add_parser('motor-position', help='直接发角度目标，并保持串口打开运行闭环')
+    position.add_argument('--gm', type=float, help='GM6020 目标角度，单位度')
+    position.add_argument('--dm', type=float, help='DM4310 目标角度，单位度')
+    position.add_argument('--seconds', type=float, default=0, help='运行秒数，0 表示直到 Ctrl+C')
+    for name, help_text in (('motor-status', '读取两个电机的状态'),
+                            ('motor-stop', '停止选定电机'), ('motor-zero', '将停止电机的当前位置设为软件零点'),
+                            ('motor-tune', '设置停止电机的闭环参数')):
+        command = commands.add_parser(name, help=help_text)
+        if name in ('motor-stop', 'motor-zero'):
+            command.add_argument('--mask', type=int, choices=(1, 2, 3), default=3, help='1=GM，2=DM，3=同时')
+        if name == 'motor-tune':
+            command.add_argument('--motor', type=int, choices=(1, 2), required=True)
+            for parameter in ('position-kp', 'velocity-kp', 'velocity-ki', 'max-velocity', 'max-output'):
+                command.add_argument('--' + parameter, type=float, required=True)
+            command.add_argument('--max-position', type=float, default=12.5)
+    for command in (position, *[commands.choices[name] for name in ('motor-status', 'motor-stop', 'motor-zero', 'motor-tune')]):
+        command.add_argument('--channel', type=int, choices=(1, 2, 3), default=1, help='固件 motor_config.h 配置的共享 CAN 通道')
     args = parser.parse_args()
     if args.command == 'ports':
         from serial.tools import list_ports
@@ -325,6 +392,36 @@ def main():
             seq = bridge.send(args.channel, args.id, bytes.fromhex(args.data), extended=args.extended,
                               fd=args.fd, brs=args.brs, remote_length=args.remote_length)
             print(f'发送成功，sequence={seq}')
+        elif args.command == 'motor-status':
+            print(json.dumps(bridge.motor_status(args.channel), ensure_ascii=False, indent=2))
+        elif args.command == 'motor-stop':
+            bridge.motor_stop(args.mask, args.channel)
+            print('已停止')
+        elif args.command == 'motor-zero':
+            bridge.motor_zero(args.mask, args.channel)
+            print('软件零点已设置')
+        elif args.command == 'motor-tune':
+            bridge.motor_tune(args.motor, args.position_kp, args.velocity_kp, args.velocity_ki,
+                              args.max_velocity, args.max_output, args.max_position, args.channel)
+            print('参数已设置')
+        elif args.command == 'motor-position':
+            if args.seconds < 0 or not math.isfinite(args.seconds):
+                raise ValueError('运行秒数必须为有限非负数')
+            mask = int(args.gm is not None) | (int(args.dm is not None) << 1)
+            bridge.motor_position(None if args.gm is None else math.radians(args.gm),
+                                  None if args.dm is None else math.radians(args.dm), args.channel)
+            deadline = time.monotonic() + args.seconds if args.seconds else float('inf')
+            try:
+                while time.monotonic() < deadline:
+                    status = bridge.motor_status(args.channel)
+                    print(json.dumps(status, ensure_ascii=False), flush=True)
+                    if any(status[name]['state'] == MOTOR_STATES[3] for bit, name in ((1, 'gm6020'), (2, 'dm4310')) if mask & bit):
+                        raise IOError('所选电机已故障停止，状态见上方')
+                    time.sleep(0.1)
+            except KeyboardInterrupt:
+                pass
+            finally:
+                bridge.motor_stop(mask, args.channel)
         elif args.command == 'monitor':
             deadline = time.monotonic() + args.seconds if args.seconds else float('inf')
             try:

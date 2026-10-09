@@ -6,6 +6,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 from dm_can import ACK, RX, TX_RESULT, TX, FD, BRS, Bridge, Packet, Parser, crc16
+from dm_can import MOTOR_POSITION, MOTOR_STATUS, MOTOR_STOP
 
 
 class FakeSerial:
@@ -28,7 +29,12 @@ class FakeSerial:
             self.data += Packet(RX, ch, 0, 0, struct.pack('<IIB', 0x100 + ch, 1234, 2) + bytes([ch, 0])).encode()
         if p.type == TX:
             self.data += Packet(TX_RESULT, p.channel, 0, p.sequence, struct.pack('<BI', 0, 2000)).encode()
-        self.data += Packet(ACK, p.channel, 0, p.sequence, bytes([p.type, 0])).encode()
+        extra = b''
+        if p.type == MOTOR_STATUS:
+            extra = struct.pack('<BBBBfffffII', 1, 2, 0, 30, 1, 2, 0.3, 1, 0.2, 5, 0)
+            extra += struct.pack('<BBBBfffffII', 2, 0, 0, 31, 0, 0, 0, 0, 0, 0xFFFFFFFF, 3)
+            extra += struct.pack('<I', 7)
+        self.data += Packet(ACK, p.channel, 0, p.sequence, bytes([p.type, 0]) + extra).encode()
         return len(data)
 
     def read(self, size):
@@ -42,6 +48,34 @@ class FakeSerial:
 
 
 class HostTests(unittest.TestCase):
+    def test_motor_position_wire_and_independent_mask(self):
+        serial = FakeSerial()
+        with Bridge('fake', transport=serial) as bridge:
+            bridge.motor_position(gm=1.25, dm=-0.5)
+            p = Packet.decode(serial.writes[-1][:-1])
+            self.assertEqual((p.type, p.channel, p.payload), (MOTOR_POSITION, 1, struct.pack('<Bff', 3, 1.25, -0.5)))
+            bridge.motor_position(dm=0)
+            self.assertEqual(Packet.decode(serial.writes[-1][:-1]).payload, struct.pack('<Bff', 2, 0, 0))
+            count = len(serial.writes)
+            for value in (float('nan'), float('inf')):
+                with self.assertRaises(ValueError):
+                    bridge.motor_position(gm=value)
+            with self.assertRaises(ValueError):
+                bridge.motor_position()
+            self.assertEqual(len(serial.writes), count)
+
+    def test_motor_status_and_stop(self):
+        serial = FakeSerial()
+        with Bridge('fake', transport=serial) as bridge:
+            status = bridge.motor_status()
+            self.assertEqual(status['gm6020']['state'], '位置控制')
+            self.assertEqual(status['gm6020']['feedback_age_ms'], 5)
+            self.assertIsNone(status['dm4310']['feedback_age_ms'])
+            self.assertEqual(status['missed_control_ticks'], 7)
+            bridge.motor_stop(2)
+            p = Packet.decode(serial.writes[-1][:-1])
+            self.assertEqual((p.type, p.payload), (MOTOR_STOP, b'\x02'))
+
     def test_crc_known_vector(self):
         self.assertEqual(crc16(b'123456789'), 0x29B1)
 

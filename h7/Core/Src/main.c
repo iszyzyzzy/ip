@@ -1,5 +1,6 @@
 #include "board.h"
 #include "bridge.h"
+#include "motor_can.h"
 #include "usb_device.h"
 extern PCD_HandleTypeDef hpcd_USB_OTG_HS;
 
@@ -7,6 +8,7 @@ int main(void)
 {
     HAL_Init();
     board_init();
+    motor_init(motor_can_send,motor_can_ready,motor_can_cancel);
     bridge_init();
     MX_USB_DEVICE_Init();
     for (;;) bridge_poll();

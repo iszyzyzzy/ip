@@ -14,7 +14,7 @@ add_library(st_drivers OBJECT ${HAL_SOURCES} ${USB_SOURCES}
   Core/Src/system_stm32h7xx.c Core/Src/startup_stm32h723xx.s
   USB_DEVICE/App/usb_device.c USB_DEVICE/App/usbd_desc.c USB_DEVICE/Target/usbd_conf.c)
 add_executable(firmware.elf Core/Src/main.c Core/Src/board.c Core/Src/protocol.c
-  Core/Src/bridge.c USB_DEVICE/App/usbd_cdc_if.c)
+  Core/Src/bridge.c Core/Src/motor.c Core/Src/motor_can.c USB_DEVICE/App/usbd_cdc_if.c)
 set(INCLUDES Core/Inc USB_DEVICE/App USB_DEVICE/Target vendor/HAL/Inc
   vendor/CMSIS/Include vendor/CMSIS/Device/Include vendor/USB/Core/Inc vendor/USB/CDC/Inc)
 foreach(target st_drivers firmware.elf)

@@ -43,6 +43,11 @@ TX 不接受 ESI 或未知标志。FD 不允许 RTR，BRS 仅能与 FD 同用。
 | 0x04 | TX | 1～3 | can_id u32、length u8、data[length] |
 | 0x05 | STATS | 1～3 | 空 |
 | 0x06 | PING | 0 | 任意 0～78 字节 |
+| 0x10 | MOTOR_POSITION | 电机共享通道，默认 1 | mask u8、gm_position f32、dm_position f32，共 9 字节 |
+| 0x11 | MOTOR_STATUS | 同上 | 空 |
+| 0x12 | MOTOR_STOP | 同上 | mask u8 |
+| 0x13 | MOTOR_TUNE | 同上 | motor u8、六个 f32，共 25 字节 |
+| 0x14 | MOTOR_ZERO | 同上 | mask u8 |
 | 0x80 | ACK | 原通道 | command_type u8、status u8、可选数据 |
 | 0x81 | RX | 1～3 | can_id u32、timestamp_us u32、length u8、data[length] |
 | 0x82 | TX_RESULT | 1～3 | status u8、timestamp_us u32 |
@@ -72,12 +77,13 @@ RX 的 sequence 独立于命令；ACK/RX/TX_RESULT 可穿插出现，上位机�
 | --- | --- |
 | 0 | OK；TX_RESULT 中表示实际完成发送 |
 | 1 | INVALID，类型、通道、flags、长度或参数无效 |
-| 2 | BUSY，发送队列满、sequence 仍在途，或配置时通道没有关闭 |
-| 3 | CLOSED，通道关闭或处于只听模式 |
+| 2 | BUSY，发送队列满、sequence 仍在途、配置时通道没有关闭、电机运行中调参/置零，或 TX 使用电机保留 ID |
+| 3 | CLOSED，通道关闭/只听，或电机通道未处于经典 CAN 1 Mbps 正常模式，或所需反馈尚未收到 |
 | 4 | HAL_ERROR，底层操作失败 |
 | 5 | TIMEOUT，100 ms 后请求取消，确认未成功发送 |
 | 6 | CANCELED，关闭或恢复通道时清理在途请求 |
 | 7 | BUS_OFF，拒绝新增发送 |
+| 8 | MOTOR_FAULT，位置参考失效、过温或达妙驱动状态异常 |
 
 每路最多 16 个在途 TX，三路可同时提交。发生 bus-off 后固件每隔 1 秒恢复一次该通道；也可以关闭后再打开。重启通道时丢弃旧发送请求，避免恢复后突然发送积压命令。USB 会话结束后不发送旧会话的 ACK/TX_RESULT。
 
@@ -85,7 +91,37 @@ RX 的 sequence 独立于命令；ACK/RX/TX_RESULT 可穿插出现，上位机�
 
 成功 ACK 的 command/status 后：firmware_major u8、minor u8、patch u8、channel_count u8（3）、max_data_length u8（64）、tx_slots u8（每路 16）、capabilities u16、board_name ASCII 剩余字节（`DM-H723`，无末尾 NUL）。
 
-capabilities bit0=经典 CAN，bit1=CAN FD，bit2=只听，bit3=内部回环。
+capabilities bit0=经典 CAN，bit1=CAN FD，bit2=只听，bit3=内部回环，bit4=双电机位置闭环。当前固件版本 1.1.0。
+
+### 电机命令
+
+电机命令 flags=0，channel 必须等于 `motor_config.h` 中的共享通道。所有 f32 为 IEEE754 binary32、小端；位置单位 rad，速度 rad/s。mask bit0 选择 GM6020，bit1 选择 DM4310，仅接受 1、2、3。未选择的电机不改变目标或运行状态，其位置字段忽略。两个电机同时选中时，先检查所有目标，再同时更新；一个无效则整条指令拒绝。
+
+MOTOR_POSITION 不需要提前使能命令：GM6020 必须已有新鲜反馈，DM4310 自动发送 MIT 使能帧并等待使能反馈。成功 ACK 只表示接受目标，查询 MOTOR_STATUS 获取实际位置和运行状态。目标持续有效，直到新的目标、STOP、故障或 CDC 会话结束。没有 TX_RESULT。首次反馈位置自动作为各自零点，支持连续多圈累计；反馈中断超过 100 ms 后，需要先停止并执行 MOTOR_ZERO 重新建立软件零点。
+
+MOTOR_STOP 清零 GM6020 电流、失能 DM4310。MOTOR_ZERO 要求所选电机已停止且反馈新鲜；只修改 H723 的位置参考，不写电机的硬件零点或 Flash。
+
+MOTOR_TUNE 的 motor=1 为 GM6020、2 为 DM4310。六个 f32 按顺序为 position_kp、velocity_kp、velocity_ki、max_velocity、max_output、max_position；只能在停止或故障状态设置。三个增益范围 0～100，max_velocity 为 (0,30] rad/s，max_output 为 (0,3] A / (0,10] Nm，max_position 为 (0,1000] rad，所有数值必须有限。max_position 是目标绝对值上限，不是机械限位检测。参数保存在 RAM。
+
+MOTOR_STATUS 成功 ACK 的 command/status 后为两个 32 字节记录，再附 missed_control_ticks u32，共 68 字节：
+
+| 记录偏移 | 字段 |
+| --- | --- |
+| 0 | motor u8，1=GM6020、2=DM4310 |
+| 1 | state u8：0 停止、1 等待使能反馈、2 位置控制、3 故障停止 |
+| 2 | fault u8：0 无、1 反馈超时/失去使能、2 驱动故障、3 总线不可用、4 发送阻塞、5 CDC 断开、6 控制周期超时、7 参考失效、8 过温 |
+| 3 | temperature u8，℃；达妙取 MOS/绕组温度较高者 |
+| 4 | position f32，rad |
+| 8 | velocity f32，rad/s |
+| 12 | effort f32，反馈电流 A / 力矩 Nm |
+| 16 | target f32，rad |
+| 20 | output f32，指令电流 A / 力矩 Nm |
+| 24 | feedback_age_ms u32，未收到反馈为 0xffffffff |
+| 28 | tx_failures u32，本地电机提交失败/忙次数，非精确总线丢帧数 |
+
+missed_control_ticks 是相对于 1 ms 调度的累计跳过周期。普通 STATS 的 tx_* 只统计透传 TX 请求，不包含本地电机控制发送。
+
+电机通道禁止原始 TX 使用 `0x1FE/0x2FE/0x1FF/0x2FF` 及 DM motor ID、ID+0x100/0x200/0x300，避免与本地闭环竞争。反馈帧继续通过 RX 上报。关闭/重配共享 CAN 或 bus-off 会停止电机，恢复总线后必须重新发送目标。使用方法与默认参数见 [电机控制](motors.md)。
 
 ### STATS 数据
 
