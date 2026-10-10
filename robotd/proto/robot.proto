@@ -1,0 +1,75 @@
+syntax = "proto3";
+package robot.v1;
+import "google/protobuf/struct.proto";
+import "eyes.proto";
+
+// 上层只访问此服务；配置修改均以 revision 作并发检查。
+service RobotControl {
+  rpc GetConfig(Empty) returns (ConfigSnapshot);
+  rpc UpdateConfig(ConfigUpdate) returns (ConfigSnapshot);
+  rpc GetState(Empty) returns (RobotState);
+  rpc WatchState(WatchRequest) returns (stream RobotState);
+  rpc AcquireControl(AcquireRequest) returns (Lease);
+  rpc RenewControl(LeaseRequest) returns (Lease);
+  rpc ReleaseControl(LeaseRequest) returns (Ack);
+  rpc SetTargets(TargetRequest) returns (Ack);
+  rpc StreamTargets(stream TargetRequest) returns (Ack);
+  // Stop 不需要控制权；clear_latch 只在重新取得控制权时生效。
+  rpc Stop(StopRequest) returns (Ack);
+  rpc ZeroNeck(ZeroRequest) returns (Ack);
+  rpc ListActions(Empty) returns (ActionList);
+  rpc PutAction(ActionUpdate) returns (ActionRecord);
+  rpc DeleteAction(ActionDelete) returns (Ack);
+  rpc RunAction(RunRequest) returns (Ack);
+  rpc CancelAction(LeaseRequest) returns (Ack);
+}
+message Empty {}
+message Ack { uint64 revision = 1; }
+message ConfigSnapshot { uint64 revision = 1; google.protobuf.Struct config = 2; }
+message ConfigUpdate { uint64 expected_revision = 1; google.protobuf.Struct config = 2; }
+message AcquireRequest { string owner = 1; uint32 ttl_ms = 2; bool clear_latch = 3; }
+message LeaseRequest { string token = 1; }
+message Lease { string token = 1; string owner = 2; uint32 ttl_ms = 3; }
+enum ChassisMode { ACKERMANN = 0; CRAB = 1; SPIN = 2; PARK = 3; }
+message ChassisTarget {
+  ChassisMode mode = 1;
+  double speed_m_s = 2;
+  double yaw_rate_rad_s = 3;
+  double steering_rad = 4;
+  uint32 ttl_ms = 5; // 100..1000；到期只停止底盘速度，不能由心跳续期。
+}
+message NeckTarget { optional double yaw_rad = 1; optional double pitch_rad = 2; }
+message ArmTarget { repeated double joint_rad = 1; uint32 duration_ms = 2; }
+message Targets {
+  ChassisTarget chassis = 1;
+  NeckTarget neck = 2;
+  ArmTarget left_arm = 3;
+  ArmTarget right_arm = 4;
+  eyes.v1.Pose eyes = 5;
+  eyes.v1.BlinkRequest blink = 6;
+}
+message TargetRequest { string token = 1; Targets targets = 2; }
+message StopRequest { bool latch = 1; }
+message ZeroRequest { string token = 1; uint32 mask = 2; }
+message WatchRequest { uint32 interval_ms = 1; }
+message RobotState {
+  uint64 revision = 1;
+  uint64 config_revision = 2;
+  uint64 applied_config_revision = 3;
+  bool simulated = 4;
+  bool stopped = 5;
+  bool latched = 6;
+  string owner = 7;
+  uint32 lease_remaining_ms = 8;
+  string action = 9;
+  string fault = 10;
+  google.protobuf.Struct devices = 11;
+}
+message ActionStep { uint32 at_ms = 1; Targets targets = 2; }
+// 时间点发送目标，不做机器人逆运动学；结束、取消或失去租约后停止。
+message Action { string name = 1; repeated ActionStep steps = 2; uint32 duration_ms = 3; }
+message ActionRecord { uint64 revision = 1; Action action = 2; bool deleted = 3; }
+message ActionList { repeated ActionRecord actions = 1; }
+message ActionUpdate { uint64 expected_revision = 1; Action action = 2; }
+message ActionDelete { string name = 1; uint64 expected_revision = 2; }
+message RunRequest { string token = 1; string name = 2; }

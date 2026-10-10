@@ -3,3 +3,10 @@ h7/build/
 h7/dist/
 __pycache__/
 *.pyc
+robotd.sqlite*
+*.sqlite.lock
+.venv/
+*.egg-info/
+build/
+dist/
+robotd/generated-config.json

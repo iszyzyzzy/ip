@@ -1,0 +1,7 @@
+{
+  "neck": {"yaw_rad": 0.1, "pitch_rad": -0.1},
+  "eyes": {
+    "left": {"gaze_x": 0.3, "gaze_y": -0.1, "openness": 1.0},
+    "right": {"gaze_x": 0.3, "gaze_y": -0.1, "openness": 1.0}
+  }
+}

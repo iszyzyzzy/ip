@@ -1,0 +1,17 @@
+{
+  "name": "greeting",
+  "duration_ms": 2400,
+  "steps": [
+    {
+      "at_ms": 0,
+      "targets": {
+        "neck": {"yaw_rad": 0.0, "pitch_rad": 0.1},
+        "left_arm": {"joint_rad": [0.1, 0.15, 0.0, 0.0], "duration_ms": 600},
+        "right_arm": {"joint_rad": [-0.1, 0.15, 0.0, 0.0], "duration_ms": 600},
+        "blink": {}
+      }
+    },
+    {"at_ms": 800, "targets": {"neck": {"yaw_rad": 0.2}}},
+    {"at_ms": 1600, "targets": {"neck": {"yaw_rad": 0.0, "pitch_rad": 0.0}}}
+  ]
+}

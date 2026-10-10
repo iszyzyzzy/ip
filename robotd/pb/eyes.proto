@@ -1,0 +1,113 @@
+syntax = "proto3";
+package eyes.v1;
+
+// Local HTTP/2 gRPC over a real AF_UNIX stream socket, including on Windows.
+service EyeControl {
+  rpc GetState(Empty) returns (State);
+  rpc SetPose(Pose) returns (Ack);
+  rpc StreamPoses(stream Pose) returns (Ack);
+  rpc Configure(Config) returns (Ack);
+  rpc Blink(Empty) returns (Ack);
+  // Re-read current --assets directory, atomically retain old pack on failure.
+  rpc ReloadAssets(Empty) returns (Ack);
+  rpc SaveSettings(Empty) returns (Ack);
+  rpc ConnectTracking(Empty) returns (Ack);
+  rpc TriggerBlink(BlinkRequest) returns (Ack);
+}
+message Empty {}
+message Ack { uint64 revision = 1; }
+enum Mode { IDLE = 0; MOUSE = 1; IFACIALMOCAP = 2; EXTERNAL = 3; SIMULATOR = 4; }
+message BlinkRequest {
+  optional bool left = 1; // omitted = true, anatomical left
+  optional bool right = 2; // omitted = true
+  optional float duration = 3; // seconds, omitted = configured blink_duration
+}
+message JellyConfig {
+  optional bool enabled = 1;
+  optional float strength = 2; // 0..1
+  optional float frequency = 3; // spring frequency, Hz, 1..12
+  optional float damping = 4; // damping ratio, 0.15..1.5
+}
+message LayerConfig {
+  optional bool iris = 1;
+  optional bool pupil = 2;
+  optional bool highlights = 3;
+  optional bool sclera = 4;
+  optional bool upper_lid = 5;
+  optional bool lower_lid = 6;
+  optional bool brow = 7;
+}
+message SimulatorConfig {
+  optional float target_x = 1; // normalized screen direction -1 left .. +1 right
+  optional float target_y = 2; // normalized screen direction -1 up .. +1 down
+  optional bool eye_motion = 3; // small saccades around the target
+  optional float motion_amplitude = 4; // 0..0.3 normalized
+  optional float motion_speed = 5; // 0.1..8 saccades/sec
+  optional float convergence = 6; // 0..0.3 inward offset
+  optional float left_openness = 7; // 0..1.4
+  optional float right_openness = 8;
+  optional float left_brow = 9; // -1..1
+  optional float right_brow = 10;
+  optional float roll = 11; // radians -0.8..0.8
+  optional bool show_target = 12; // overlay only while controls are visible
+}
+message ArtConfig {
+  optional float half_width = 1;
+  optional float upper_height = 2;
+  optional float lower_height = 3;
+  optional float roundness = 4;
+  optional float iris_aspect = 5;
+  optional float brow_height = 6;
+  optional float lid_texture_height = 7;
+  optional float shadow_strength = 8;
+}
+// Anatomical left/right: left eye appears on the right of the screen.
+message Eye {
+  float gaze_x = 1; // -1 left .. +1 right, screen coordinates
+  float gaze_y = 2; // -1 up .. +1 down
+  float openness = 3; // 0 closed .. 1 normal .. 1.4 wide
+  float brow = 4; // -1 lowered .. +1 raised
+}
+// Full snapshot, both eyes required. Automatically selects EXTERNAL mode.
+// Pose remains held until replaced or another mode is selected.
+message Pose { Eye left = 1; Eye right = 2; float roll = 3; } // radians, -0.8 .. 0.8
+message Color { float r = 1; float g = 2; float b = 3; } // 0 .. 1
+// Patch semantics: unspecified fields stay unchanged.
+message Config {
+  optional Mode mode = 1;
+  optional float scale = 2;
+  optional float spacing = 3;
+  optional float iris_size = 4;
+  optional float pupil = 5;
+  optional float tilt = 6;
+  optional float glow = 7;
+  optional float expression = 8;
+  optional float response = 9;
+  Color iris = 10;
+  Color background = 11;
+  optional bool auto_blink = 12;
+  optional bool mirror_tracking = 13;
+  optional bool follow_head_roll = 14;
+  optional bool show_controls = 15;
+  optional bool fullscreen = 16;
+  JellyConfig jelly = 17;
+  LayerConfig layers = 18;
+  SimulatorConfig simulator = 19;
+  optional float blink_interval = 20; // seconds 0.5..20
+  optional float blink_duration = 21; // seconds 0.08..1
+  optional float blink_variation = 22; // fractional interval jitter 0..0.8
+  optional uint32 tracking_port = 23; // 1024..65535; rebinds atomically
+  optional string phone_ip = 24; // IPv4 or empty; ConnectTracking starts transmission
+  ArtConfig art = 25;
+}
+message State {
+  uint64 revision = 1; // last command applied by the render/UI thread
+  Config config = 2;
+  Pose rendered_pose = 3;
+  bool tracking_live = 4;
+  uint64 tracking_packets = 5;
+  uint64 rejected_packets = 6;
+  repeated float jelly_left = 7; // GPU deformation: offset x/y, squash, shear
+  repeated float jelly_right = 8;
+  string tracking_status = 9;
+}
