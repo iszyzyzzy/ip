@@ -2,6 +2,8 @@
 
 [robotd](robotd/README.md) 提供统一 gRPC 控制、SQLite 权威配置与动作存储，连接 H7、双臂总线舵机和眼屏。
 
+[robot-remote](robot_remote/README.md) 独立运行 HTTP/WebSocket 遥控服务，为网页提供状态推送、控制会话、运动目标和动作接口，通过 gRPC 连接 robotd。
+
 - [H7 固件与上位机协议](h7/README.md)：三路 CAN、GM6020/DM4310 位置闭环。
 - [眼屏渲染](eyes/README.md)：双眼渲染及本地 gRPC。
 - [底盘协议资料](agv.md)：RANGER AIR。

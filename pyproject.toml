@@ -11,18 +11,21 @@ dependencies = ["grpcio>=1.81,<2", "protobuf>=6.33.5,<7", "pyserial>=3.5,<4"]
 
 [project.optional-dependencies]
 dev = ["grpcio-tools>=1.81,<1.82", "ruff>=0.12"]
+remote = ["aiohttp>=3.12,<4"]
 
 [project.scripts]
 robotd = "robotd.server:main"
 robotctl = "robotd.client:main"
+robot-remote = "robot_remote.server:main"
 
 [tool.setuptools]
-packages = ["robotd", "robotd.pb", "h7.tools"]
+packages = ["robotd", "robotd.pb", "robot_remote", "h7.tools"]
 include-package-data = false
 
 [tool.setuptools.package-data]
 robotd = ["proto/*.proto", "pb/*.proto", "examples/*.json", "examples/*.py",
           "deploy/*.service", "README.md"]
+robot_remote = ["deploy/*.service", "README.md"]
 
 [tool.ruff]
 line-length = 100

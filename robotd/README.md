@@ -2,6 +2,8 @@
 
 robotd 是上层动作程序、调试工具和遥控程序访问底层设备的统一入口。Python 3.11+，部署在树莓派；Windows 可运行模拟服务和客户端。
 
+网页遥控通过独立进程 [robot-remote](../robot_remote/README.md) 接入；它提供 HTTP API 和 WebSocket，不随 robotd 自动启动。
+
 ```text
 调试 / 动作程序 / 遥控程序
            │ robot.v1.RobotControl (gRPC)
