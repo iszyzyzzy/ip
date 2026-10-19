@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0
 #include <linux/delay.h>
 #include <linux/gpio/consumer.h>
+#include <linux/io.h>
+#include <linux/iopoll.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/platform_device.h>
 #include <video/mipi_display.h>
 #include <drm/drm_connector.h>
 #include <drm/drm_mipi_dsi.h>
@@ -13,7 +16,20 @@ struct fl7707n {
 	struct drm_panel panel;
 	struct mipi_dsi_device *dsi;
 	struct gpio_desc *reset;
+	void __iomem *rp1_regs;
 };
+
+static unsigned int meter_reset_ms;
+module_param(meter_reset_ms, uint, 0644);
+MODULE_PARM_DESC(meter_reset_ms, "保持 LP-11，按低/高/低阶段延长复位供万用表测量（最大 30 秒/阶段）");
+
+static unsigned int brightness_bytes = 2;
+module_param(brightness_bytes, uint, 0644);
+MODULE_PARM_DESC(brightness_bytes, "51 亮度命令的参数数目：1 或 2，默认按厂家手册发 2 个");
+
+static bool vendor_generic;
+module_param(vendor_generic, bool, 0644);
+MODULE_PARM_DESC(vendor_generic, "用 Generic 包发送同一厂家扩展命令表，供包类型对照");
 
 struct fl7707n_cmd {
 	u8 len;
@@ -43,6 +59,23 @@ static struct fl7707n *to_fl7707n(struct drm_panel *panel)
 	return container_of(panel, struct fl7707n, panel);
 }
 
+static void fl7707n_host_status(struct fl7707n *ctx, const char *stage)
+{
+	void __iomem *r = ctx->rp1_regs;
+	u32 err0, err1;
+
+	if (!r)
+		return;
+	/* 错误状态读取会清除锁存位，分阶段采样才能定位到本次请求。 */
+	err0 = readl(r + 0xbc);
+	err1 = readl(r + 0xc0);
+	dev_info(&ctx->dsi->dev,
+		 "%s: LPCLK=%#x PHY=%#x PKT=%#x RXCFG=%#x RDWAIT=%#x IF=%#x ERR0=%#x ERR1=%#x%s\n",
+		 stage, readl(r + 0x94), readl(r + 0xb0), readl(r + 0x74),
+		 readl(r + 0x2c), readl(r + 0xf4), readl(r + 0xa4), err0, err1,
+		 err1 & BIT(1) ? " LP接收超时" : "");
+}
+
 static int fl7707n_prepare(struct drm_panel *panel)
 {
 	struct fl7707n *ctx = to_fl7707n(panel);
@@ -51,37 +84,76 @@ static int fl7707n_prepare(struct drm_panel *panel)
 	ssize_t ret;
 	u8 status = 0;
 	u8 id[3] = { 0 };
+	unsigned int meter_ms = min(meter_reset_ms, 30000u);
+	u32 saved_lpclk = 0, phy;
+
+	fl7707n_host_status(ctx, "复位前主机");
+	if (meter_ms && ctx->rp1_regs) {
+		/* 仅测量模式强制撤销 HS 时钟请求；普通启动依靠非连续时钟配置。 */
+		saved_lpclk = readl(ctx->rp1_regs + 0x94);
+		writel(0, ctx->rp1_regs + 0x94);
+		ret = readl_poll_timeout(ctx->rp1_regs + 0xb0, phy,
+					(phy & 0x94) == 0x94, 1000, 100000);
+		dev_info(dev, "万用表测量：CLK/D0/D1 Stop=%s，PHY=%#x\n",
+			 ret ? "未全部进入" : "已进入", phy);
+	}
 
 	/* 转接板常供电；CAM_GPIO 经 1.8 V 缓冲只控制复位。 */
 	gpiod_set_value_cansleep(ctx->reset, 1);
+	if (meter_ms) {
+		dev_info(dev, "万用表测量：RST 低 %u ms\n", meter_ms);
+		msleep(meter_ms);
+		gpiod_set_value_cansleep(ctx->reset, 0);
+		dev_info(dev, "万用表测量：RST 高 %u ms\n", meter_ms);
+		msleep(meter_ms);
+		gpiod_set_value_cansleep(ctx->reset, 1);
+		dev_info(dev, "万用表测量：RST 再低 %u ms\n", meter_ms);
+		msleep(meter_ms);
+	}
 	msleep(20);
 	gpiod_set_value_cansleep(ctx->reset, 0);
 	msleep(120);
+	fl7707n_host_status(ctx, "复位释放后主机");
 	/* Sleep In 也允许读 0A，先区分通信本身失败还是厂家表执行后失效。 */
 	ret = mipi_dsi_set_maximum_return_packet_size(ctx->dsi, 1);
 	if (ret < 0)
 		dev_warn(dev, "初始化前设置回包长度失败: %zd\n", ret);
 	ret = mipi_dsi_dcs_read(ctx->dsi, 0x0a, &status, 1);
 	dev_info(dev, "初始化前电源状态回读: ret=%zd value=0x%02x\n", ret, status);
+	fl7707n_host_status(ctx, "初始化前读0A后");
 	status = 0;
 	for (i = 0; i < ARRAY_SIZE(fl7707n_init); i++) {
 		const struct fl7707n_cmd *cmd = &fl7707n_init[i];
 		u8 data[64];
 
 		memcpy(data, cmd->data, cmd->len);
-		/* 视频稳定前关闭 PWM 引脚，避免提前启动板上背光升压。 */
+		/* 扩展寄存器长包留在 Command Mode；53 的 BCTRL/BL 仍保持复位关闭值。 */
 		if (data[0] == 0xc7)
-			data[1] &= ~BIT(7);
+			data[1] |= BIT(7);
 		/* SY7200A 推荐 PWM 不低于 20 kHz，厂家表的约 1 kHz 不适用。 */
 		if (data[0] == 0xc8) {
 			data[1] = 0x00;
 			data[2] = 0x03;
 		}
-		ret = mipi_dsi_dcs_write_buffer(ctx->dsi, data, cmd->len);
+		if (vendor_generic && data[0] >= 0xb0)
+			ret = mipi_dsi_generic_write(ctx->dsi, data, cmd->len);
+		else
+			ret = mipi_dsi_dcs_write_buffer(ctx->dsi, data, cmd->len);
 		if (ret < 0) {
 			dev_err(dev, "初始化命令 0x%02x 发送失败: %zd\n", cmd->data[0], ret);
-			gpiod_set_value_cansleep(ctx->reset, 1);
-			return ret;
+			goto prepare_failed;
+		}
+		if (data[0] == 0xba || data[0] == 0xc7) {
+			u8 value = 0;
+
+			/* 在扩展命令仍解锁时验证关键设置，避免只在 EF 之后检查。 */
+			mipi_dsi_set_maximum_return_packet_size(ctx->dsi, 1);
+			if (vendor_generic)
+				ret = mipi_dsi_generic_read(ctx->dsi, data, 1, &value, 1);
+			else
+				ret = mipi_dsi_dcs_read(ctx->dsi, data[0], &value, 1);
+			dev_info(dev, "扩展寄存器 %02x: 写入首参=%02x 回读ret=%zd value=%02x\n",
+				 data[0], data[1], ret, value);
 		}
 		/* 厂家表仅等待 50 ms；现场时序要求 Display On 后超过 120 ms。 */
 		if (data[0] == MIPI_DCS_SET_DISPLAY_ON)
@@ -89,63 +161,66 @@ static int fl7707n_prepare(struct drm_panel *panel)
 		else if (cmd->delay_ms)
 			msleep(cmd->delay_ms);
 	}
+	/* 先允许亮度寄存器生效，BL 仍关闭；视频稳定后才打开 BL。 */
+	ret = mipi_dsi_dcs_write(ctx->dsi, 0x53, (u8[]) { 0x20 }, 1);
+	if (ret < 0)
+		goto prepare_failed;
+	/* 亮度长包也在 Command Mode 写入，Video Mode 仅发送短包开关背光。 */
+	ret = mipi_dsi_dcs_write(ctx->dsi, 0x51, (u8[]) { 0x80, 0x80 },
+				 brightness_bytes == 1 ? 1 : 2);
+	if (ret < 0)
+		goto prepare_failed;
 	/* 写入成功只证明主机发送完成，回读用于区分面板实际应答。 */
 	ret = mipi_dsi_set_maximum_return_packet_size(ctx->dsi, sizeof(id));
 	if (ret < 0)
 		dev_warn(dev, "设置回读包长度失败: %zd\n", ret);
 	ret = mipi_dsi_dcs_read(ctx->dsi, 0x04, id, sizeof(id));
 	dev_info(dev, "面板 ID 回读: ret=%zd value=%02x %02x %02x\n", ret, id[0], id[1], id[2]);
+	fl7707n_host_status(ctx, "初始化后读ID后");
 	mipi_dsi_set_maximum_return_packet_size(ctx->dsi, 1);
 	ret = mipi_dsi_dcs_read(ctx->dsi, 0x0a, &status, 1);
 	dev_info(dev, "初始化表已发送（Display On 后等待 150 ms），电源状态回读: ret=%zd value=0x%02x\n", ret, status);
+	fl7707n_host_status(ctx, "初始化后读0A后");
+	if (meter_ms && ctx->rp1_regs)
+		writel(saved_lpclk, ctx->rp1_regs + 0x94);
 	return 0;
-}
 
-static int fl7707n_set_pwm_output(struct fl7707n *ctx, bool enable)
-{
-	unsigned int i;
-	u8 data[64];
-	ssize_t ret;
-
-	/* C7 还含模块专用参数，开关 PWM 时保留厂家表的其余字节。 */
-	for (i = 0; i < ARRAY_SIZE(fl7707n_init); i++) {
-		const struct fl7707n_cmd *cmd = &fl7707n_init[i];
-
-		if (cmd->data[0] != 0xc7)
-			continue;
-		memcpy(data, cmd->data, cmd->len);
-		if (enable)
-			data[1] |= BIT(7);
-		else
-			data[1] &= ~BIT(7);
-		ret = mipi_dsi_dcs_write_buffer(ctx->dsi, data, cmd->len);
-		return ret < 0 ? ret : 0;
-	}
-	return -EINVAL;
+prepare_failed:
+	gpiod_set_value_cansleep(ctx->reset, 1);
+	if (meter_ms && ctx->rp1_regs)
+		writel(saved_lpclk, ctx->rp1_regs + 0x94);
+	return ret;
 }
 
 static int fl7707n_enable(struct drm_panel *panel)
 {
 	struct fl7707n *ctx = to_fl7707n(panel);
 	int ret;
+	unsigned int i;
+	static const u8 commands[] = { 0x0a, 0x54, 0x52, 0xc7 };
 
 	/* RP1 在 panel enable 前启动视频；留 50 ms，超过图中的 33.2 ms。 */
 	msleep(50);
-	ret = mipi_dsi_dcs_write(ctx->dsi, 0x51, (u8[]) { 0x80, 0x80 }, 2);
-	if (ret < 0)
-		goto backlight_failed;
 	ret = mipi_dsi_dcs_write(ctx->dsi, 0x53, (u8[]) { 0x24 }, 1);
 	if (ret < 0)
 		goto backlight_failed;
-	ret = fl7707n_set_pwm_output(ctx, true);
-	if (ret < 0)
-		goto backlight_failed;
 	dev_info(&ctx->dsi->dev, "视频启动后等待 50 ms，背光 PWM 开启命令已发送，亮度 0x80\n");
+	fl7707n_host_status(ctx, "背光短包后");
+	/* 回读标准亮度和控制值，区分命令已发出与寄存器确实发生变化。 */
+	for (i = 0; i < ARRAY_SIZE(commands); i++) {
+		u8 value[2] = { 0 };
+		size_t len = i < 2 ? 1 : 2;
+
+		mipi_dsi_set_maximum_return_packet_size(ctx->dsi, len);
+		ret = mipi_dsi_dcs_read(ctx->dsi, commands[i], value, len);
+		dev_info(&ctx->dsi->dev, "视频后回读 %02x: ret=%d data=%02x %02x（51 参数数=%u）\n",
+			 commands[i], ret, value[0], value[1], brightness_bytes);
+		fl7707n_host_status(ctx, "视频后读寄存器");
+	}
 	return 0;
 
 backlight_failed:
 	dev_err(&ctx->dsi->dev, "背光控制命令发送失败: %d\n", ret);
-	fl7707n_set_pwm_output(ctx, false);
 	return ret;
 }
 
@@ -154,10 +229,7 @@ static int fl7707n_disable(struct drm_panel *panel)
 	struct fl7707n *ctx = to_fl7707n(panel);
 	int ret;
 
-	/* 先关背光，再由 DRM 停视频、执行 Display Off 和 Sleep In。 */
-	ret = fl7707n_set_pwm_output(ctx, false);
-	if (ret < 0)
-		return ret;
+	/* 仅需标准短包先关背光，再由 DRM 停视频、执行 Display Off 和 Sleep In。 */
 	ret = mipi_dsi_dcs_write(ctx->dsi, 0x53, (u8[]) { 0x00 }, 1);
 	return ret < 0 ? ret : 0;
 }
@@ -215,9 +287,19 @@ static int fl7707n_probe(struct mipi_dsi_device *dsi)
 	dsi->lanes = 2;
 	dsi->format = MIPI_DSI_FMT_RGB888;
 	dsi->mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_VIDEO_SYNC_PULSE |
-			  MIPI_DSI_MODE_LPM;
+			  MIPI_DSI_MODE_LPM | MIPI_DSI_CLOCK_NON_CONTINUOUS;
+	if (of_device_is_compatible(dsi->host->dev->of_node, "raspberrypi,rp1dsi")) {
+		struct resource *res = platform_get_resource(to_platform_device(dsi->host->dev),
+							 IORESOURCE_MEM, 1);
+
+		if (!res)
+			return -ENODEV;
+		ctx->rp1_regs = devm_ioremap(&dsi->dev, res->start, resource_size(res));
+		if (!ctx->rp1_regs)
+			return -ENOMEM;
+	}
 	drm_panel_init(&ctx->panel, &dsi->dev, &fl7707n_funcs, DRM_MODE_CONNECTOR_DSI);
-	/* 发送初始化命令前需要 DSI 主机进入 LP-11。 */
+	/* 此标志只保证主机先初始化；时钟能否回到 LP-11 还取决于时钟模式。 */
 	ctx->panel.prepare_prev_first = true;
 	drm_panel_add(&ctx->panel);
 	ret = mipi_dsi_attach(dsi);

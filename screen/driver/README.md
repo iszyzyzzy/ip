@@ -7,6 +7,24 @@
 
 ## 2026-10-20 时序修正及资料核查
 
+**最新实测更新：** 见 [LP-11 与回读恢复记录](AUDIT-LP11-20261020.md)。
+仅设置 prepare_prev_first 并不能保证时钟 LP-11；加入 MIPI_DSI_CLOCK_NON_CONTINUOUS 后，
+首次成功读到 ID `93 65 04`、复位状态 `08`、Sleep Out 后状态 `18`。
+无需修改主机接收计时、ECC/CRC 寄存器即可回读，不能再把 -5 归因于缺少读等待配置。
+用户反馈仍无背光或画面。当前 C7、51 在 Command Mode 配置，先发 `53 20` 再写亮度；
+视频启动 50 ms 后仅发 `53 24` 短包开启 BL。这取代下方上一轮方案中的 Video Mode 重写 C7。
+
+万用表测量模式通过模块参数 `meter_reset_ms` 开启，0 为普通初始化，最大每阶段 30000 ms：
+
+```sh
+echo 30000 | sudo tee /sys/module/panel_fl7707n/parameters/meter_reset_ms
+sudo python3 trigger-init.py --fb /dev/fb0
+```
+
+测量模式在复位前强制撤销 HS 时钟请求并检查 CLK/D0/D1 Stop 位；RST 依次低、高、再低，
+每阶段保持指定毫秒数，最后按正常顺序初始化并恢复自动非连续时钟。
+停止后设回 0，下次初始化恢复普通速度。冷启动配置未修改。
+
 核查详情见 [AUDIT-20261020.md](AUDIT-20261020.md)。以下描述取代旧实验记录中的提前开背光流程：
 
 1. RST 拉低 20 ms，释放后等待 120 ms，再发送厂家初始化表。
