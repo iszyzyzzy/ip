@@ -49,6 +49,7 @@ static int fl7707n_prepare(struct drm_panel *panel)
 	unsigned int i;
 	ssize_t ret;
 	u8 status = 0;
+	u8 id[3] = { 0 };
 
 	/* 转接板常供电；CAM_GPIO 经 1.8 V 缓冲只控制复位。 */
 	gpiod_set_value_cansleep(ctx->reset, 1);
@@ -57,8 +58,18 @@ static int fl7707n_prepare(struct drm_panel *panel)
 	msleep(120);
 	for (i = 0; i < ARRAY_SIZE(fl7707n_init); i++) {
 		const struct fl7707n_cmd *cmd = &fl7707n_init[i];
+		u8 data[64];
 
-		ret = mipi_dsi_dcs_write_buffer(ctx->dsi, cmd->data, cmd->len);
+		memcpy(data, cmd->data, cmd->len);
+		/* 板上 SY7200 的使能来自面板 PWM；厂家表只开启了 VOUT。 */
+		if (data[0] == 0xc7)
+			data[1] |= BIT(7);
+		/* SY7200A 推荐 PWM 不低于 20 kHz，厂家表的约 1 kHz 不适用。 */
+		if (data[0] == 0xc8) {
+			data[1] = 0x00;
+			data[2] = 0x03;
+		}
+		ret = mipi_dsi_dcs_write_buffer(ctx->dsi, data, cmd->len);
 		if (ret < 0) {
 			dev_err(dev, "初始化命令 0x%02x 发送失败: %zd\n", cmd->data[0], ret);
 			gpiod_set_value_cansleep(ctx->reset, 1);
@@ -67,10 +78,29 @@ static int fl7707n_prepare(struct drm_panel *panel)
 		if (cmd->delay_ms)
 			msleep(cmd->delay_ms);
 	}
+	/* BCTRL 和 BL 复位后均为零，须显式开启才会产生背光 PWM。 */
+	ret = mipi_dsi_dcs_write(ctx->dsi, 0x51, (u8[]) { 0x80, 0x80 }, 2);
+	if (ret < 0)
+		goto backlight_failed;
+	ret = mipi_dsi_dcs_write(ctx->dsi, 0x53, (u8[]) { 0x24 }, 1);
+	if (ret < 0)
+		goto backlight_failed;
+	dev_info(dev, "背光 PWM 已使能，亮度设置为 0x80\n");
 	/* 写入成功只证明主机发送完成，回读用于区分面板实际应答。 */
+	ret = mipi_dsi_set_maximum_return_packet_size(ctx->dsi, sizeof(id));
+	if (ret < 0)
+		dev_warn(dev, "设置回读包长度失败: %zd\n", ret);
+	ret = mipi_dsi_dcs_read(ctx->dsi, 0x04, id, sizeof(id));
+	dev_info(dev, "面板 ID 回读: ret=%zd value=%02x %02x %02x\n", ret, id[0], id[1], id[2]);
+	mipi_dsi_set_maximum_return_packet_size(ctx->dsi, 1);
 	ret = mipi_dsi_dcs_read(ctx->dsi, 0x0a, &status, 1);
 	dev_info(dev, "初始化表已发送，电源状态回读: ret=%zd value=0x%02x\n", ret, status);
 	return 0;
+
+backlight_failed:
+	dev_err(dev, "背光控制命令发送失败: %zd\n", ret);
+	gpiod_set_value_cansleep(ctx->reset, 1);
+	return ret;
 }
 
 static int fl7707n_unprepare(struct drm_panel *panel)
