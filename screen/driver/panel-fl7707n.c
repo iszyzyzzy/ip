@@ -31,6 +31,10 @@ static bool vendor_generic;
 module_param(vendor_generic, bool, 0644);
 MODULE_PARM_DESC(vendor_generic, "用 Generic 包发送同一厂家扩展命令表，供包类型对照");
 
+static bool backlight_only;
+module_param(backlight_only, bool, 0644);
+MODULE_PARM_DESC(backlight_only, "保持 Display Off，仅按手册公开的 C7/C8 参数测试背光 PWM");
+
 struct fl7707n_cmd {
 	u8 len;
 	u8 data[64];
@@ -125,6 +129,10 @@ static int fl7707n_prepare(struct drm_panel *panel)
 	for (i = 0; i < ARRAY_SIZE(fl7707n_init); i++) {
 		const struct fl7707n_cmd *cmd = &fl7707n_init[i];
 		u8 data[64];
+		size_t len = cmd->len;
+
+		if (backlight_only && cmd->data[0] == MIPI_DCS_SET_DISPLAY_ON)
+			continue;
 
 		memcpy(data, cmd->data, cmd->len);
 		/* 扩展寄存器长包留在 Command Mode；53 的 BCTRL/BL 仍保持复位关闭值。 */
@@ -135,10 +143,13 @@ static int fl7707n_prepare(struct drm_panel *panel)
 			data[1] = 0x00;
 			data[2] = 0x03;
 		}
+		/* 仅在独立 PWM 实验中对照公开的两参数格式，保留普通模式厂家原表。 */
+		if (backlight_only && (data[0] == 0xc7 || data[0] == 0xc8))
+			len = 3;
 		if (vendor_generic && data[0] >= 0xb0)
-			ret = mipi_dsi_generic_write(ctx->dsi, data, cmd->len);
+			ret = mipi_dsi_generic_write(ctx->dsi, data, len);
 		else
-			ret = mipi_dsi_dcs_write_buffer(ctx->dsi, data, cmd->len);
+			ret = mipi_dsi_dcs_write_buffer(ctx->dsi, data, len);
 		if (ret < 0) {
 			dev_err(dev, "初始化命令 0x%02x 发送失败: %zd\n", cmd->data[0], ret);
 			goto prepare_failed;
@@ -161,6 +172,16 @@ static int fl7707n_prepare(struct drm_panel *panel)
 		else if (cmd->delay_ms)
 			msleep(cmd->delay_ms);
 	}
+	if (backlight_only) {
+		/* PWM 独立于内容自适应调光，避免黑色像素内容干扰背光实验。 */
+		ret = mipi_dsi_dcs_write(ctx->dsi, 0x55, (u8[]) { 0x00 }, 1);
+		if (ret < 0)
+			goto prepare_failed;
+		ret = mipi_dsi_dcs_set_display_off(ctx->dsi);
+		if (ret < 0)
+			goto prepare_failed;
+		dev_info(dev, "独立背光测试：保留 Sleep Out，保持 Display Off，不发送 Display On\n");
+	}
 	/* 先允许亮度寄存器生效，BL 仍关闭；视频稳定后才打开 BL。 */
 	ret = mipi_dsi_dcs_write(ctx->dsi, 0x53, (u8[]) { 0x20 }, 1);
 	if (ret < 0)
@@ -179,7 +200,9 @@ static int fl7707n_prepare(struct drm_panel *panel)
 	fl7707n_host_status(ctx, "初始化后读ID后");
 	mipi_dsi_set_maximum_return_packet_size(ctx->dsi, 1);
 	ret = mipi_dsi_dcs_read(ctx->dsi, 0x0a, &status, 1);
-	dev_info(dev, "初始化表已发送（Display On 后等待 150 ms），电源状态回读: ret=%zd value=0x%02x\n", ret, status);
+	dev_info(dev, "初始化完成（%s），电源状态回读: ret=%zd value=0x%02x\n",
+		 backlight_only ? "Display Off 独立 PWM 测试" : "Display On 后等待 150 ms",
+		 ret, status);
 	fl7707n_host_status(ctx, "初始化后读0A后");
 	if (meter_ms && ctx->rp1_regs)
 		writel(saved_lpclk, ctx->rp1_regs + 0x94);
