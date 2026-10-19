@@ -30,7 +30,10 @@
 初始化后追加 `51 80 80`（约半亮度）和 `53 24`（BCTRL/BL 开启）。
 回读前显式设置最大回包长度，并新增 0x04 面板 ID 回读。
 单路热加载试验中，ID 和状态仍均返回 -5；不能把写入完成当作背光已亮。
-热加载后 DRM 编号发生变化且第二路未自动启用，需重启后干净复测。
+热加载后 DRM 编号发生变化，已重启后干净复测：两路都 enabled，均已
+执行 PWM 开启和亮度命令，但 ID/状态回读仍均为 -5。
+`show-pattern.py` 已补充显式 framebuffer modeset，使没有控制台的第二路也能启用。
+最新日志为远端 `dmesg-pwm-cleanboot.log`；新版实际画面等待现场确认。
 
 芯片资料：[Silergy SY7200A](https://www.silergy.com/zh/download/downloadFile?ftype=note&id=4351&type=product)。
 

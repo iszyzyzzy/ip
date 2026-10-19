@@ -1,4 +1,5 @@
 bringup/
+__pycache__/
 driver/*.o
 driver/*.ko
 driver/*.mod

@@ -1,5 +1,7 @@
 """向双屏 framebuffer 写入不同编号的彩条，便于现场核对端口和颜色。"""
+import fcntl
 import mmap
+import struct
 from pathlib import Path
 
 glyphs = {
@@ -27,6 +29,11 @@ for index in range(2):
             offset = y * stride + x * 4
             frame[offset:offset + 4] = color.to_bytes(4, "little")
     with open(f"/dev/fb{index}", "r+b", buffering=0) as device:
+        # 第二路没有控制台时可能尚未启用；显式 modeset 才会发送其初始化表。
+        variable = bytearray(160)
+        fcntl.ioctl(device, 0x4600, variable)
+        struct.pack_into("I", variable, 84, 0x80)  # FB_ACTIVATE_FORCE
+        fcntl.ioctl(device, 0x4601, variable)
         with mmap.mmap(device.fileno(), len(frame)) as memory:
             memory[:] = frame
     print(f"fb{index}: {width}x{height} 彩条和编号 {index} 已写入")
