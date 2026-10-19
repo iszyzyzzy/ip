@@ -92,8 +92,9 @@ sudo python3 show-pattern.py
 当前 Pi 5 把两路 DSI 暴露为不同的 DRM 设备，可使用已有 eyes 应用的双设备参数：
 
 ```sh
-./eyes --headless --drm-device /dev/dri/card2 --left-connector DSI-1 \
-  --right-drm-device /dev/dri/card3 --right-connector DSI-2 \
+./eyes --headless \
+  --drm-device /dev/dri/by-path/platform-1f00118000.dsi-card --left-connector DSI-1 \
+  --right-drm-device /dev/dri/by-path/platform-1f00130000.dsi-card --right-connector DSI-2 \
   --socket /tmp/eyes.sock --fps 60
 ```
 
@@ -125,6 +126,19 @@ sudo journalctl -b -1 -e
 当次读到 `get_throttled=0x0`、`get_rsts=1000`、`power_reset=00000000`，
 PMIC 输入约 5.075 V；这些只描述当次启动，不能反推前一次异常的原因。
 运行中的硬件 watchdog 超时为 1 分钟，保持原设置不变。
+
+受控重启实测通过：`screen-pattern` 和 `screen-monitor` 均自动进入 active，
+两路 RST 自动为高，两块 framebuffer 的彩条均自动写入。
+boot ID 从 `dab95a48-601f-4b43-b2af-53e861022925` 变为
+`77f493e5-3bdf-43d0-9e8f-9f91c1b37449`，上一轮 journal 保存了完整的正常重启尾部。
+开机提前加载改变了 DRM 卡号，本次两路为 card0/card1；上面的 eyes 命令
+使用已核实的 `/dev/dri/by-path/` 路径，避免依赖编号。
+
+受控重启后连续观察至 uptime 339 秒，12 条区间报告均属于同一个 boot ID，
+欠压/限频标志始终为 0x0，2 秒采样记录的 EXT5V 范围为 5.061179–5.09736 V。
+两路 RST 保持高、DSI 保持 enabled，监测服务 NRestarts=0，未发现内核欠压、
+panic、Oops 或锁死日志。该轮未观察到异常重启，监测服务继续后台运行。
+不能据此排除更短瞬态或确定用户此前 1.5 V 读数是仪表误差。
 
 模块安装针对当前内核，内核更新后需重新编译安装。
 设备树将两个相机稳压器节点设为 disabled，避免占用同一根复位脚。

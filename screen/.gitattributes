@@ -1,2 +1,3 @@
 # PDF 内部偏移依赖原始字节，不能参与文本换行转换。
 *.pdf binary
+driver/* text eol=lf
