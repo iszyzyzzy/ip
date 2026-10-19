@@ -145,6 +145,23 @@ panic、Oops 或锁死日志。该轮未观察到异常重启，监测服务继�
 
 ## 回退
 
+2026-10-19 后续现场恢复记录：设备无法通过原 IP 或主机名连接，用户把 microSD
+插入 Windows。已确认 E: 为 FAT32 bootfs，当前 config 与安装前备份仅差新增的
+双屏 overlay 段。离线将 config.txt 恢复为 config.txt.before-fl7707n 的原始字节，
+并在 cmdline.txt 的同一行末尾加入：
+
+```text
+systemd.mask=screen-pattern.service systemd.mask=screen-monitor.service
+```
+
+这会在后续启动中临时屏蔽两项新增服务。原始 cmdline 的 root PARTUUID、网络相关
+参数均保留；未修改网络文件。修改前文件备份在本机
+`screen/bringup/recovery-20261019-211645/`，config 回读 SHA256 与安装前备份一致。
+等待用户安全弹出、插回设备并上电确认网络；此时尚不能认定离线原因。
+恢复连接后先查持久化 journal，再决定是否重新启用显示实验。
+
+以下命令适用于设备仍可通过 SSH 访问的情况：
+
 ```sh
 sudo systemctl disable --now screen-pattern screen-monitor
 sudo cp -a /boot/firmware/config.txt.before-fl7707n /boot/firmware/config.txt
