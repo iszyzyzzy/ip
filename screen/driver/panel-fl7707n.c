@@ -173,6 +173,31 @@ static int fl7707n_prepare(struct drm_panel *panel)
 			msleep(cmd->delay_ms);
 	}
 	if (backlight_only) {
+		/* Sleep Out 会触发 OTP 装载；醒来后重新解锁并重写完整 IO/PWM 配置作对照。 */
+		ret = mipi_dsi_dcs_write(ctx->dsi, 0xb9, (u8[]) { 0xf1, 0x12, 0x87 }, 3);
+		if (ret < 0)
+			goto prepare_failed;
+		for (i = 0; i < ARRAY_SIZE(fl7707n_init); i++) {
+			const struct fl7707n_cmd *cmd = &fl7707n_init[i];
+			u8 data[64], value = 0;
+
+			if (cmd->data[0] != 0xc7 && cmd->data[0] != 0xc8)
+				continue;
+			memcpy(data, cmd->data, cmd->len);
+			if (data[0] == 0xc7)
+				data[1] |= BIT(7);
+			else {
+				data[1] = 0x00;
+				data[2] = 0x03;
+			}
+			ret = mipi_dsi_dcs_write_buffer(ctx->dsi, data, cmd->len);
+			if (ret < 0)
+				goto prepare_failed;
+			mipi_dsi_set_maximum_return_packet_size(ctx->dsi, 1);
+			ret = mipi_dsi_dcs_read(ctx->dsi, data[0], &value, 1);
+			dev_info(dev, "Sleep Out 后重写 %02x: 回读ret=%zd value=%02x\n",
+				 data[0], ret, value);
+		}
 		/* PWM 独立于内容自适应调光，避免黑色像素内容干扰背光实验。 */
 		ret = mipi_dsi_dcs_write(ctx->dsi, 0x55, (u8[]) { 0x00 }, 1);
 		if (ret < 0)
@@ -310,7 +335,8 @@ static int fl7707n_probe(struct mipi_dsi_device *dsi)
 	dsi->lanes = 2;
 	dsi->format = MIPI_DSI_FMT_RGB888;
 	dsi->mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_VIDEO_SYNC_PULSE |
-			  MIPI_DSI_MODE_LPM | MIPI_DSI_CLOCK_NON_CONTINUOUS;
+			  MIPI_DSI_MODE_LPM | MIPI_DSI_CLOCK_NON_CONTINUOUS |
+			  MIPI_DSI_MODE_NO_EOT_PACKET;
 	if (of_device_is_compatible(dsi->host->dev->of_node, "raspberrypi,rp1dsi")) {
 		struct resource *res = platform_get_resource(to_platform_device(dsi->host->dev),
 							 IORESOURCE_MEM, 1);
