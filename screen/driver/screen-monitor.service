@@ -1,0 +1,12 @@
+[Unit]
+Description=双屏实验供电与启动监测
+After=systemd-journald.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/libexec/fl7707n-monitor-power.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

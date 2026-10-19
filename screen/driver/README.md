@@ -2,7 +2,7 @@
 
 用于 Raspberry Pi 5 和当前转接板，屏幕型号 HD40031C30-Y，720×720。
 初始化命令来自上级目录厂家 `2lane V5.5` TXT，保持原寄存器内容和延时。
-供电由转接板提供，驱动只控制复位和 DSI，不管理背光电源。
+供电由转接板提供，驱动控制复位、DSI 及屏幕输出到背光芯片的 PWM。
 
 ## 2026-10-19 实机结果
 
@@ -99,22 +99,45 @@ sudo python3 show-pattern.py
 
 此命令尚未在本次设备运行。先确认彩条图，再部署渲染应用。
 
-## 恢复与启动配置
+## 开机启动及供电监测
 
-本次只动态加载了屏幕设备树，重启即可恢复原启动配置。
-如果只想恢复桌面服务：
+用户要求改为开机加载，并排查可能的异常重启。执行 `sudo sh install-boot.sh` 后：
+
+- 首次备份启动配置到 `/boot/firmware/config.txt.before-fl7707n`，安装 overlay 并在 `[all]` 中启用。
+- `/etc/modules-load.d/fl7707n.conf` 确保自定义面板模块加载。
+- `screen-pattern.service` 启用两路 framebuffer 并写入 0/1 彩条。
+- `screen-monitor.service` 每 2 秒采样 PMIC 的 EXT5V、欠压/限频标志；每 30 秒记录区间极值、温度、RST 和 DSI 状态，标志变化时立即记录。
+- journal 持久化保存，最大 32 MB、同步间隔 15 秒；能保存后续启动的日志。
+- 测试期间禁用原先启用的 `lightdm.service`，避免桌面接管彩条。
+
+监测只读状态，不自动重启系统。启动 ID 和 uptime 用于区分重启和时钟校正。
+2 秒采样不能排除更短的电源瞬态，PMIC 电压是树莓派输入，不是转接板 1V8/2V8。
+极端断电可能丢失尚未落盘的最后几条记录。
 
 ```sh
-sudo systemctl start display-manager
+systemctl status screen-pattern screen-monitor
+sudo journalctl -u screen-monitor -f -o cat
+sudo journalctl --list-boots
+sudo journalctl -b -1 -e
 ```
 
-确认点亮后，如需开机加载，先备份配置，再安装 overlay：
+首次检查时系统原先没有持久化 journal，无法还原用户所述红灯前的过程。
+当次读到 `get_throttled=0x0`、`get_rsts=1000`、`power_reset=00000000`，
+PMIC 输入约 5.075 V；这些只描述当次启动，不能反推前一次异常的原因。
+运行中的硬件 watchdog 超时为 1 分钟，保持原设置不变。
+
+模块安装针对当前内核，内核更新后需重新编译安装。
+设备树将两个相机稳压器节点设为 disabled，避免占用同一根复位脚。
+
+## 回退
 
 ```sh
-sudo cp -a /boot/firmware/config.txt /boot/firmware/config.txt.before-fl7707n
-sudo install -m 644 fl7707n-dual.dtbo /boot/firmware/overlays/fl7707n-dual.dtbo
+sudo systemctl disable --now screen-pattern screen-monitor
+sudo cp -a /boot/firmware/config.txt.before-fl7707n /boot/firmware/config.txt
+sudo rm -f /etc/modules-load.d/fl7707n.conf
+sudo systemctl enable lightdm.service
+sudo reboot
 ```
 
-在 `config.txt` 的 `[all]` 段加入 `dtoverlay=fl7707n-dual`。
-模块通过设备匹配自动加载；内核更新后需为新内核重新编译安装模块。
-设备树将两个相机稳压器节点设为 disabled，避免它们占用同一根复位脚。
+此回退恢复安装前的启动配置；如之后对 config.txt 另有修改，应只删除
+`dtoverlay=fl7707n-dual`，避免覆盖后续修改。持久化日志配置保留以供排查。

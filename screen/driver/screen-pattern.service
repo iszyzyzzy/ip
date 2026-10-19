@@ -1,0 +1,12 @@
+[Unit]
+Description=双 DSI 屏幕开机彩条测试
+After=systemd-modules-load.service
+
+[Service]
+Type=oneshot
+ExecStartPre=/usr/bin/udevadm settle --timeout=20
+ExecStart=/usr/bin/python3 /usr/local/libexec/fl7707n-show-pattern.py
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
