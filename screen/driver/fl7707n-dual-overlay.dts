@@ -1,0 +1,60 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+	compatible = "brcm,bcm2712";
+
+	/* 同一根 CAM_IO0 作为面板复位，不能再交给相机稳压器驱动。 */
+	fragment@0 {
+		target = <&cam0_reg>;
+		__overlay__ { status = "disabled"; };
+	};
+	fragment@1 {
+		target = <&cam1_reg>;
+		__overlay__ { status = "disabled"; };
+	};
+	fragment@2 {
+		target = <&dsi0>;
+		__overlay__ {
+			status = "okay";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			port {
+				dsi0_out: endpoint { remote-endpoint = <&panel0_in>; };
+			};
+			panel@0 {
+				compatible = "huadi,hd40031c30-fl7707n";
+				reg = <0>;
+				reset-gpios = <&rp1_gpio 34 1>;
+				port {
+					panel0_in: endpoint {
+						remote-endpoint = <&dsi0_out>;
+						data-lanes = <1 2>;
+					};
+				};
+			};
+		};
+	};
+	fragment@3 {
+		target = <&dsi1>;
+		__overlay__ {
+			status = "okay";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			port {
+				dsi1_out: endpoint { remote-endpoint = <&panel1_in>; };
+			};
+			panel@0 {
+				compatible = "huadi,hd40031c30-fl7707n";
+				reg = <0>;
+				reset-gpios = <&rp1_gpio 46 1>;
+				port {
+					panel1_in: endpoint {
+						remote-endpoint = <&dsi1_out>;
+						data-lanes = <1 2>;
+					};
+				};
+			};
+		};
+	};
+};
