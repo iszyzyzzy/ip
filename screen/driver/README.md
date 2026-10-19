@@ -37,18 +37,18 @@
 
 芯片资料：[Silergy SY7200A](https://www.silergy.com/zh/download/downloadFile?ftype=note&id=4351&type=product)。
 
-### 待实测的供电疑点
+### 供电实测及图纸判读更正
 
-完整原理图的 U8（TPS7A2033）、U10（TPS7A2018）和 U7（RT9043）
-均把 EN（3 脚）接到了 GND。三者均为高电平使能；如果实物与图一致，
-3V3、1V8、2V8 稳压器将保持关闭。这是原理图推断，尚未测量实物确认。
+此前将辅助电源 EN 连线误判为接地，该判断已撤回。用户确认 EN 接到 5 V，
+且实测 1V8=1.80 V、2V8=2.81 V、5V=4.96 V，供电电压正常。
+用户已断电更换一套 FFC 线和延长器，继续在这套接线下复测。
 
-下一步测量各电容电源侧对 GND 的电压：C37 应约 5 V，C46 应约 1.8 V，
-C48 应约 2.8 V；必要时再测 C44（约 3.3 V）及 U7/U10 的 EN。
-确认电源轨正常后再继续 DSI 接线、复位实际电平及面板通信排查。
-
-依据：[TI TPS7A20 的 EN 说明](https://www.ti.com/lit/ds/symlink/tps7a20.pdf)，
-[Richtek RT9043 的 Enable Function](https://www.richtek.com/assets/product_file/RT9043/DS9043-03.pdf)。
+换线后已重新连接设备，加载当前模块与 overlay，并运行 `show-pattern.py`。
+两路均为 enabled、720×720，复位 GPIO34/46 均为高电平，系统欠压标志为零；
+两路 0x04 ID 和 0x0A 电源状态回读仍返回 -5。日志保存为远端
+`/home/iprpi/screen-bringup/dmesg-new-ffc.log`。
+画面等待现场确认；若仍全黑，优先测屏幕连接器处的 RST 和 PWM 实际信号，
+并确认电源是否经过 FFC/延长器送到屏幕侧。
 
 DRM 的 connected 是固定面板驱动报告的状态，不是线缆或面板应答检测。
 DRM 卡号可能随启动顺序变化，重新启动后用 `kmsprint` 核对。
