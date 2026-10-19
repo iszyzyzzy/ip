@@ -175,6 +175,13 @@ sudo reboot
 
 ## 黑屏与 PWM 低电平的波形定位
 
+重刷后重新测试时，新增 `fl7707n-cam0-overlay.dts`，只启用 CAM/DISP0。
+源码在设备本机重新编译通过，用 `sudo insmod ./panel-fl7707n.ko` 和
+`sudo dtoverlay -d . fl7707n-cam0` 首次加载产生初始化波形，未部署开机配置。
+本轮首次加载已确认执行：GPIO34 高、GPIO46 低，DSI-1 enabled，SSH 正常，
+欠压标志为零；面板 ID 和状态回读仍均为 -5。等待现场示波器捕获结果。
+本轮没有通过 framebuffer 关显/恢复再次触发。
+
 现场反馈：屏幕 FPC 的 VCC/IOVCC 正常，PWM 近低电平，背光 A 约 4.9 V。
 该现象与背光未获得使能相符，不能单独认定升压芯片损坏。
 驱动日志中的背光配置发送完成，也不等于面板已经接收和执行。

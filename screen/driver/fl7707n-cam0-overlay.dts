@@ -1,0 +1,34 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+	compatible = "brcm,bcm2712";
+
+	/* 单路捕获只占用 CAM/DISP0 的复位脚和 DSI 主机。 */
+	fragment@0 {
+		target = <&cam0_reg>;
+		__overlay__ { status = "disabled"; };
+	};
+	fragment@1 {
+		target = <&dsi0>;
+		__overlay__ {
+			status = "okay";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			port {
+				dsi0_out: endpoint { remote-endpoint = <&panel0_in>; };
+			};
+			panel@0 {
+				compatible = "huadi,hd40031c30-fl7707n";
+				reg = <0>;
+				reset-gpios = <&rp1_gpio 34 1>;
+				port {
+					panel0_in: endpoint {
+						remote-endpoint = <&dsi0_out>;
+						data-lanes = <1 2>;
+					};
+				};
+			};
+		};
+	};
+};
