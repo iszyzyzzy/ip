@@ -3,6 +3,7 @@
 #include <linux/gpio/consumer.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <video/mipi_display.h>
 #include <drm/drm_connector.h>
 #include <drm/drm_mipi_dsi.h>
 #include <drm/drm_modes.h>
@@ -33,8 +34,8 @@ static const struct drm_display_mode fl7707n_mode = {
 	.vsync_start = 720 + 16,
 	.vsync_end = 720 + 16 + 4,
 	.vtotal = 720 + 16 + 4 + 16,
-	.width_mm = 72,
-	.height_mm = 72,
+	.width_mm = 102,
+	.height_mm = 102,
 };
 
 static struct fl7707n *to_fl7707n(struct drm_panel *panel)
@@ -61,9 +62,9 @@ static int fl7707n_prepare(struct drm_panel *panel)
 		u8 data[64];
 
 		memcpy(data, cmd->data, cmd->len);
-		/* 板上 SY7200 的使能来自面板 PWM；厂家表只开启了 VOUT。 */
+		/* 视频稳定前关闭 PWM 引脚，避免提前启动板上背光升压。 */
 		if (data[0] == 0xc7)
-			data[1] |= BIT(7);
+			data[1] &= ~BIT(7);
 		/* SY7200A 推荐 PWM 不低于 20 kHz，厂家表的约 1 kHz 不适用。 */
 		if (data[0] == 0xc8) {
 			data[1] = 0x00;
@@ -75,17 +76,12 @@ static int fl7707n_prepare(struct drm_panel *panel)
 			gpiod_set_value_cansleep(ctx->reset, 1);
 			return ret;
 		}
-		if (cmd->delay_ms)
+		/* 厂家表仅等待 50 ms；现场时序要求 Display On 后超过 120 ms。 */
+		if (data[0] == MIPI_DCS_SET_DISPLAY_ON)
+			msleep(150);
+		else if (cmd->delay_ms)
 			msleep(cmd->delay_ms);
 	}
-	/* BCTRL 和 BL 复位后均为零，须显式开启才会产生背光 PWM。 */
-	ret = mipi_dsi_dcs_write(ctx->dsi, 0x51, (u8[]) { 0x80, 0x80 }, 2);
-	if (ret < 0)
-		goto backlight_failed;
-	ret = mipi_dsi_dcs_write(ctx->dsi, 0x53, (u8[]) { 0x24 }, 1);
-	if (ret < 0)
-		goto backlight_failed;
-	dev_info(dev, "背光 PWM 已使能，亮度设置为 0x80\n");
 	/* 写入成功只证明主机发送完成，回读用于区分面板实际应答。 */
 	ret = mipi_dsi_set_maximum_return_packet_size(ctx->dsi, sizeof(id));
 	if (ret < 0)
@@ -94,13 +90,69 @@ static int fl7707n_prepare(struct drm_panel *panel)
 	dev_info(dev, "面板 ID 回读: ret=%zd value=%02x %02x %02x\n", ret, id[0], id[1], id[2]);
 	mipi_dsi_set_maximum_return_packet_size(ctx->dsi, 1);
 	ret = mipi_dsi_dcs_read(ctx->dsi, 0x0a, &status, 1);
-	dev_info(dev, "初始化表已发送，电源状态回读: ret=%zd value=0x%02x\n", ret, status);
+	dev_info(dev, "初始化表已发送（Display On 后等待 150 ms），电源状态回读: ret=%zd value=0x%02x\n", ret, status);
+	return 0;
+}
+
+static int fl7707n_set_pwm_output(struct fl7707n *ctx, bool enable)
+{
+	unsigned int i;
+	u8 data[64];
+	ssize_t ret;
+
+	/* C7 还含模块专用参数，开关 PWM 时保留厂家表的其余字节。 */
+	for (i = 0; i < ARRAY_SIZE(fl7707n_init); i++) {
+		const struct fl7707n_cmd *cmd = &fl7707n_init[i];
+
+		if (cmd->data[0] != 0xc7)
+			continue;
+		memcpy(data, cmd->data, cmd->len);
+		if (enable)
+			data[1] |= BIT(7);
+		else
+			data[1] &= ~BIT(7);
+		ret = mipi_dsi_dcs_write_buffer(ctx->dsi, data, cmd->len);
+		return ret < 0 ? ret : 0;
+	}
+	return -EINVAL;
+}
+
+static int fl7707n_enable(struct drm_panel *panel)
+{
+	struct fl7707n *ctx = to_fl7707n(panel);
+	int ret;
+
+	/* RP1 在 panel enable 前启动视频；留 50 ms，超过图中的 33.2 ms。 */
+	msleep(50);
+	ret = mipi_dsi_dcs_write(ctx->dsi, 0x51, (u8[]) { 0x80, 0x80 }, 2);
+	if (ret < 0)
+		goto backlight_failed;
+	ret = mipi_dsi_dcs_write(ctx->dsi, 0x53, (u8[]) { 0x24 }, 1);
+	if (ret < 0)
+		goto backlight_failed;
+	ret = fl7707n_set_pwm_output(ctx, true);
+	if (ret < 0)
+		goto backlight_failed;
+	dev_info(&ctx->dsi->dev, "视频启动后等待 50 ms，背光 PWM 开启命令已发送，亮度 0x80\n");
 	return 0;
 
 backlight_failed:
-	dev_err(dev, "背光控制命令发送失败: %zd\n", ret);
-	gpiod_set_value_cansleep(ctx->reset, 1);
+	dev_err(&ctx->dsi->dev, "背光控制命令发送失败: %d\n", ret);
+	fl7707n_set_pwm_output(ctx, false);
 	return ret;
+}
+
+static int fl7707n_disable(struct drm_panel *panel)
+{
+	struct fl7707n *ctx = to_fl7707n(panel);
+	int ret;
+
+	/* 先关背光，再由 DRM 停视频、执行 Display Off 和 Sleep In。 */
+	ret = fl7707n_set_pwm_output(ctx, false);
+	if (ret < 0)
+		return ret;
+	ret = mipi_dsi_dcs_write(ctx->dsi, 0x53, (u8[]) { 0x00 }, 1);
+	return ret < 0 ? ret : 0;
 }
 
 static int fl7707n_unprepare(struct drm_panel *panel)
@@ -134,6 +186,8 @@ static int fl7707n_get_modes(struct drm_panel *panel,
 
 static const struct drm_panel_funcs fl7707n_funcs = {
 	.prepare = fl7707n_prepare,
+	.enable = fl7707n_enable,
+	.disable = fl7707n_disable,
 	.unprepare = fl7707n_unprepare,
 	.get_modes = fl7707n_get_modes,
 };
