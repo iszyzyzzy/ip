@@ -57,6 +57,13 @@ static int fl7707n_prepare(struct drm_panel *panel)
 	msleep(20);
 	gpiod_set_value_cansleep(ctx->reset, 0);
 	msleep(120);
+	/* Sleep In 也允许读 0A，先区分通信本身失败还是厂家表执行后失效。 */
+	ret = mipi_dsi_set_maximum_return_packet_size(ctx->dsi, 1);
+	if (ret < 0)
+		dev_warn(dev, "初始化前设置回包长度失败: %zd\n", ret);
+	ret = mipi_dsi_dcs_read(ctx->dsi, 0x0a, &status, 1);
+	dev_info(dev, "初始化前电源状态回读: ret=%zd value=0x%02x\n", ret, status);
+	status = 0;
 	for (i = 0; i < ARRAY_SIZE(fl7707n_init); i++) {
 		const struct fl7707n_cmd *cmd = &fl7707n_init[i];
 		u8 data[64];
