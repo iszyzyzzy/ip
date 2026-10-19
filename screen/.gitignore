@@ -1,0 +1,9 @@
+bringup/
+driver/*.o
+driver/*.ko
+driver/*.mod
+driver/*.mod.c
+driver/.*.cmd
+driver/Module.symvers
+driver/modules.order
+driver/*.dtbo
