@@ -56,6 +56,7 @@ class Dsi:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--brightness", type=lambda x: int(x, 0))
+    parser.add_argument("--disable-test-pattern", action="store_true", help="清除页1的4A自动循环和测试图使能位")
     args = parser.parse_args()
     if args.brightness is not None and not 0 <= args.brightness <= 255:
         parser.error("亮度必须为0～255")
@@ -66,6 +67,13 @@ def main():
         ident = [dsi.read(r) for r in (0x8D, 0x8E, 0x8F)]
         if ident[:2] != [0x93, 0x65]:
             raise RuntimeError(f"JD内部型号不符：{ident}")
+        pattern_change = None
+        if args.disable_test_pattern:
+            before = dsi.read(0x4A)
+            dsi.write(0x4A, before & ~0xC0)
+            time.sleep(0.05)
+            after = dsi.read(0x4A)
+            pattern_change = {"修改前": f"{before:02x}", "修改后": f"{after:02x}"}
         dsi.write(0xE0, 0)
         if args.brightness is not None:
             dsi.write(0x51, args.brightness)
@@ -77,6 +85,8 @@ def main():
             4: [0x1E, 0x1F, 0x35, 0x36, 0x37, 0xA3, 0xA4, 0xA5],
         }
         result = {"内部型号": " ".join(f"{x:02x}" for x in ident)}
+        if pattern_change is not None:
+            result["关闭测试图案"] = pattern_change
         for page, regs in pages.items():
             dsi.write(0xE0, page)
             result[f"页{page}"] = {f"{r:02x}": f"{dsi.read(r):02x}" for r in regs}
