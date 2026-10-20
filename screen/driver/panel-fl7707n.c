@@ -59,6 +59,14 @@ static bool jd9365_start;
 module_param(jd9365_start, bool, 0444);
 MODULE_PARM_DESC(jd9365_start, "配合 jd9365_probe，仅用 JD 解锁、两通道及标准 DCS 测试现有 OTP 配置");
 
+static bool jd9365_tcon_720;
+module_param(jd9365_tcon_720, bool, 0644);
+MODULE_PARM_DESC(jd9365_tcon_720, "JD实验：仅将页1的40/41调整为720列、720行，不修改模拟电源或GIP");
+
+static bool jd9365_power_nt;
+module_param(jd9365_power_nt, bool, 0644);
+MODULE_PARM_DESC(jd9365_power_nt, "JD实验：将页1的55低四位设为2，选择外部NT电源IC模式，保留电压/倍率参数");
+
 struct fl7707n_cmd {
 	u8 len;
 	u8 data[64];
@@ -152,6 +160,37 @@ static int fl7707n_identify_jd9365(struct fl7707n *ctx)
 	return mipi_dsi_dcs_write(ctx->dsi, 0xe0, (u8[]) { 0 }, 1);
 }
 
+static int fl7707n_jd9365_timing_status(struct fl7707n *ctx, const char *stage)
+{
+	u8 tcon[6] = { 0 }, power[8] = { 0 }, ctrl[3] = { 0 };
+	static const u8 ctrl_regs[] = { 0x24, 0x37, 0x54 };
+	unsigned int i;
+	int ret;
+
+	ret = mipi_dsi_dcs_write(ctx->dsi, 0xe0, (u8[]) { 1 }, 1);
+	if (ret < 0)
+		return ret;
+	for (i = 0; i < sizeof(tcon); i++) {
+		ret = mipi_dsi_dcs_read(ctx->dsi, 0x40 + i, &tcon[i], 1);
+		if (ret != 1)
+			return ret < 0 ? ret : -EIO;
+	}
+	for (i = 0; i < sizeof(power); i++) {
+		ret = mipi_dsi_dcs_read(ctx->dsi, 0x55 + i, &power[i], 1);
+		if (ret != 1)
+			return ret < 0 ? ret : -EIO;
+	}
+	for (i = 0; i < ARRAY_SIZE(ctrl_regs); i++) {
+		ret = mipi_dsi_dcs_read(ctx->dsi, ctrl_regs[i], &ctrl[i], 1);
+		if (ret != 1)
+			return ret < 0 ? ret : -EIO;
+	}
+	dev_info(&ctx->dsi->dev, "JD时序%s：P1 40..45=%*ph，55..5C=%*ph，24/37/54=%*ph，扫描行数=%u\n",
+		 stage, (int)sizeof(tcon), tcon, (int)sizeof(power), power,
+		 (int)sizeof(ctrl), ctrl, ((tcon[1] << 2) | ((tcon[0] >> 4) & 3)) * 2);
+	return mipi_dsi_dcs_write(ctx->dsi, 0xe0, (u8[]) { 0 }, 1);
+}
+
 static int fl7707n_start_jd9365(struct fl7707n *ctx)
 {
 	static const u8 cmds[][2] = {
@@ -161,6 +200,42 @@ static int fl7707n_start_jd9365(struct fl7707n *ctx)
 	static const u8 regs[] = { 0x80, 0x0a, 0x0c, 0x54, 0x52 };
 	unsigned int i;
 	int ret;
+
+	ret = fl7707n_jd9365_timing_status(ctx, "复位后");
+	if (ret < 0)
+		return ret;
+	if (jd9365_tcon_720 || jd9365_power_nt) {
+		u8 value = 0;
+
+		ret = mipi_dsi_dcs_write(ctx->dsi, 0xe0, (u8[]) { 1 }, 1);
+		if (ret < 0)
+			return ret;
+		if (jd9365_tcon_720) {
+			ret = mipi_dsi_dcs_read(ctx->dsi, 0x40, &value, 1);
+			if (ret != 1)
+				return ret < 0 ? ret : -EIO;
+			/* LN=360对应720行；保留IP750相关位，仅设置LN低两位和RSO。 */
+			value = (value & ~0x37) | 0x04;
+			ret = mipi_dsi_dcs_write(ctx->dsi, 0x40, &value, 1);
+			if (ret < 0)
+				return ret;
+			ret = mipi_dsi_dcs_write(ctx->dsi, 0x41, (u8[]) { 0x5a }, 1);
+			if (ret < 0)
+				return ret;
+		}
+		if (jd9365_power_nt) {
+			ret = mipi_dsi_dcs_read(ctx->dsi, 0x55, &value, 1);
+			if (ret != 1)
+				return ret < 0 ? ret : -EIO;
+			value = (value & 0xf0) | 2;
+			ret = mipi_dsi_dcs_write(ctx->dsi, 0x55, &value, 1);
+			if (ret < 0)
+				return ret;
+		}
+		ret = mipi_dsi_dcs_write(ctx->dsi, 0xe0, (u8[]) { 0 }, 1);
+		if (ret < 0)
+			return ret;
+	}
 
 	/* 已验证 JD 分页后仅设置接口和标准控制，保留面板自身的电源/GIP/OTP 参数。 */
 	for (i = 0; i < ARRAY_SIZE(cmds); i++) {
@@ -172,6 +247,9 @@ static int fl7707n_start_jd9365(struct fl7707n *ctx)
 	if (ret < 0)
 		return ret;
 	msleep(250);
+	ret = fl7707n_jd9365_timing_status(ctx, "Sleep Out后");
+	if (ret < 0)
+		return ret;
 	for (i = 0; i < ARRAY_SIZE(regs); i++) {
 		u8 value = 0;
 
