@@ -51,6 +51,14 @@ static bool brightness_probe;
 module_param(brightness_probe, bool, 0644);
 MODULE_PARM_DESC(brightness_probe, "在 Command Mode 临时启用 BL，对照亮度长短包写入，默认关闭");
 
+static bool jd9365_probe;
+module_param(jd9365_probe, bool, 0444);
+MODULE_PARM_DESC(jd9365_probe, "仅用 JD9365 分页及只读寄存器识别，结束保持复位，不发送 FL 初始化表");
+
+static bool jd9365_start;
+module_param(jd9365_start, bool, 0444);
+MODULE_PARM_DESC(jd9365_start, "配合 jd9365_probe，仅用 JD 解锁、两通道及标准 DCS 测试现有 OTP 配置");
+
 struct fl7707n_cmd {
 	u8 len;
 	u8 data[64];
@@ -94,6 +102,84 @@ static void fl7707n_host_status(struct fl7707n *ctx, const char *stage)
 		 stage, readl(r + 0x94), readl(r + 0xb0), readl(r + 0x74),
 		 readl(r + 0x2c), readl(r + 0xf4), readl(r + 0xa4), err0, err1,
 		 err1 & BIT(1) ? " LP接收超时" : "");
+}
+
+static int fl7707n_identify_jd9365(struct fl7707n *ctx)
+{
+	static const u8 unlock[][2] = {
+		{ 0xe0, 0x00 }, { 0xe1, 0x93 }, { 0xe2, 0x65 }, { 0xe3, 0xf8 },
+	};
+	static const u8 pages[] = { 0, 1, 0, 1, 0 };
+	static const u8 regs[] = { 0xe0, 0x8d, 0x8e, 0x8f, 0x80 };
+	unsigned int i, j;
+	int ret;
+
+	/* 不触及 OTP、模拟电源或 GIP；验证分页相关性比模块可定义的 04 ID 更有区分度。 */
+	for (i = 0; i < ARRAY_SIZE(unlock); i++) {
+		ret = mipi_dsi_dcs_write_buffer(ctx->dsi, unlock[i], sizeof(unlock[i]));
+		if (ret < 0)
+			return ret;
+	}
+	for (i = 0; i < ARRAY_SIZE(pages); i++) {
+		ret = mipi_dsi_dcs_write(ctx->dsi, 0xe0, &pages[i], 1);
+		if (ret < 0)
+			return ret;
+		msleep(5);
+		for (j = 0; j < ARRAY_SIZE(regs); j++) {
+			u8 value = 0;
+
+			mipi_dsi_set_maximum_return_packet_size(ctx->dsi, 1);
+			ret = mipi_dsi_dcs_read(ctx->dsi, regs[j], &value, 1);
+			dev_info(&ctx->dsi->dev, "JD分页识别：page=%u reg=%02x ret=%d value=%02x\n",
+				 pages[i], regs[j], ret, value);
+			if (ret != 1 ||
+			    (regs[j] == 0xe0 && value != pages[i]) ||
+			    (pages[i] == 1 && regs[j] == 0x8d && value != 0x93) ||
+			    (pages[i] == 1 && regs[j] == 0x8e && value != 0x65))
+				return -ENODEV;
+		}
+	}
+	ret = mipi_dsi_dcs_write(ctx->dsi, 0xe0, (u8[]) { 3 }, 1);
+	if (ret < 0)
+		return ret;
+	for (i = 0x98; i <= 0x9c; i++) {
+		u8 value = 0;
+
+		ret = mipi_dsi_dcs_read(ctx->dsi, i, &value, 1);
+		dev_info(&ctx->dsi->dev, "JD默认PWM：page=3 reg=%02x ret=%d value=%02x\n",
+			 i, ret, value);
+	}
+	return mipi_dsi_dcs_write(ctx->dsi, 0xe0, (u8[]) { 0 }, 1);
+}
+
+static int fl7707n_start_jd9365(struct fl7707n *ctx)
+{
+	static const u8 cmds[][2] = {
+		{ 0x80, 0x01 }, { 0x3a, 0x77 }, { 0x53, 0x20 },
+		{ 0x55, 0x00 }, { 0x51, 0x80 },
+	};
+	static const u8 regs[] = { 0x80, 0x0a, 0x0c, 0x54, 0x52 };
+	unsigned int i;
+	int ret;
+
+	/* 已验证 JD 分页后仅设置接口和标准控制，保留面板自身的电源/GIP/OTP 参数。 */
+	for (i = 0; i < ARRAY_SIZE(cmds); i++) {
+		ret = mipi_dsi_dcs_write_buffer(ctx->dsi, cmds[i], sizeof(cmds[i]));
+		if (ret < 0)
+			return ret;
+	}
+	ret = mipi_dsi_dcs_exit_sleep_mode(ctx->dsi);
+	if (ret < 0)
+		return ret;
+	msleep(250);
+	for (i = 0; i < ARRAY_SIZE(regs); i++) {
+		u8 value = 0;
+
+		ret = mipi_dsi_dcs_read(ctx->dsi, regs[i], &value, 1);
+		dev_info(&ctx->dsi->dev, "JD最小启动：reg=%02x ret=%d value=%02x\n",
+			 regs[i], ret, value);
+	}
+	return 0;
 }
 
 static int fl7707n_prepare(struct drm_panel *panel)
@@ -142,6 +228,17 @@ static int fl7707n_prepare(struct drm_panel *panel)
 	dev_info(dev, "初始化前电源状态回读: ret=%zd value=0x%02x\n", ret, status);
 	fl7707n_host_status(ctx, "初始化前读0A后");
 	status = 0;
+	if (jd9365_probe) {
+		ret = fl7707n_identify_jd9365(ctx);
+		if (ret >= 0 && jd9365_start)
+			ret = fl7707n_start_jd9365(ctx);
+		if (ret < 0 || !jd9365_start)
+			gpiod_set_value_cansleep(ctx->reset, 1);
+		dev_info(dev, "JD识别/启动结束：ret=%zd start=%d，跳过 FL 初始化\n", ret, jd9365_start);
+		if (meter_ms && ctx->rp1_regs)
+			writel(saved_lpclk, ctx->rp1_regs + 0x94);
+		return ret < 0 ? ret : 0;
+	}
 	for (i = 0; i < ARRAY_SIZE(fl7707n_init); i++) {
 		const struct fl7707n_cmd *cmd = &fl7707n_init[i];
 		u8 data[64];
@@ -292,9 +389,12 @@ static int fl7707n_enable(struct drm_panel *panel)
 	unsigned int i;
 	static const u8 commands[] = { 0x0a, 0x54, 0x52, 0xc7, 0x05, 0x0e, 0x0f };
 
+	if (jd9365_probe && !jd9365_start)
+		return 0;
+
 	/* 先给外部 Hsync 同步电源留出稳定时间，期间不插入 BTA 回读。 */
-	msleep(video_before_on ? 120 : 50);
-	if (video_before_on && !backlight_only) {
+	msleep(video_before_on || jd9365_probe ? 120 : 50);
+	if ((video_before_on || jd9365_probe) && !backlight_only) {
 		ret = mipi_dsi_dcs_set_display_on(ctx->dsi);
 		if (ret < 0)
 			goto backlight_failed;
@@ -330,6 +430,9 @@ static int fl7707n_disable(struct drm_panel *panel)
 	struct fl7707n *ctx = to_fl7707n(panel);
 	int ret;
 
+	if (jd9365_probe && !jd9365_start)
+		return 0;
+
 	/* 仅需标准短包先关背光，再由 DRM 停视频、执行 Display Off 和 Sleep In。 */
 	ret = mipi_dsi_dcs_write(ctx->dsi, 0x53, (u8[]) { 0x00 }, 1);
 	return ret < 0 ? ret : 0;
@@ -338,6 +441,9 @@ static int fl7707n_disable(struct drm_panel *panel)
 static int fl7707n_unprepare(struct drm_panel *panel)
 {
 	struct fl7707n *ctx = to_fl7707n(panel);
+
+	if (jd9365_probe && !jd9365_start)
+		return 0;
 
 	mipi_dsi_dcs_set_display_off(ctx->dsi);
 	msleep(50);
@@ -408,7 +514,8 @@ static int fl7707n_probe(struct mipi_dsi_device *dsi)
 	if (ret)
 		drm_panel_remove(&ctx->panel);
 	else
-		dev_info(&dsi->dev, "FL7707N 720x720 双通道面板已注册\n");
+		dev_info(&dsi->dev, "%s 720x720 双通道实验面板已注册\n",
+			 jd9365_probe ? "JD9365" : "FL7707N");
 	return ret;
 }
 
