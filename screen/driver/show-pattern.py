@@ -1,4 +1,5 @@
 """向双屏 framebuffer 写入不同编号的彩条，便于现场核对端口和颜色。"""
+import argparse
 import fcntl
 import mmap
 import struct
@@ -9,7 +10,12 @@ glyphs = {
     "1": ["010", "110", "010", "010", "111"],
 }
 colors = [0xFFFFFF, 0xFFFF00, 0x00FFFF, 0x00FF00, 0xFF00FF, 0xFF0000, 0x0000FF]
-for index in range(2):
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--fb", type=int, action="append", choices=(0, 1))
+parser.add_argument("--pattern", choices=("bars", "red", "green", "blue", "black", "white", "quadrants"), default="bars")
+args = parser.parse_args()
+solid = {"red": 0xFF0000, "green": 0x00FF00, "blue": 0x0000FF, "black": 0, "white": 0xFFFFFF}
+for index in args.fb if args.fb is not None else range(2):
     sys = Path(f"/sys/class/graphics/fb{index}")
     width, height = map(int, sys.joinpath("virtual_size").read_text().strip().split(","))
     stride = int(sys.joinpath("stride").read_text())
@@ -18,10 +24,14 @@ for index in range(2):
     for y in range(height):
         for x in range(width):
             color = colors[min(x * 7 // width, 6)]
-            if x < 8 or y < 8 or x >= width - 8 or y >= height - 8:
+            if args.pattern in solid:
+                color = solid[args.pattern]
+            elif args.pattern == "quadrants":
+                color = 0xFFFFFF if (x < width // 2) == (y < height // 2) else 0
+            elif x < 8 or y < 8 or x >= width - 8 or y >= height - 8:
                 color = 0xFFFFFF
             # 黑底大编号使两路即使画面旋转也能区分。
-            if 200 <= x < 520 and 180 <= y < 540:
+            if args.pattern == "bars" and 200 <= x < 520 and 180 <= y < 540:
                 color = 0x101010
                 gx, gy = (x - 240) // 80, (y - 210) // 60
                 if 0 <= gx < 3 and 0 <= gy < 5 and glyphs[str(index)][gy][gx] == "1":
@@ -36,4 +46,4 @@ for index in range(2):
         fcntl.ioctl(device, 0x4601, variable)
         with mmap.mmap(device.fileno(), len(frame)) as memory:
             memory[:] = frame
-    print(f"fb{index}: {width}x{height} 彩条和编号 {index} 已写入")
+    print(f"fb{index}: {width}x{height} 图案 {args.pattern} 已写入")
