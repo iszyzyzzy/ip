@@ -43,6 +43,14 @@ static bool skip_ef;
 module_param(skip_ef, bool, 0644);
 MODULE_PARM_DESC(skip_ef, "诊断时跳过厂家 EF 命令，其含义尚未确认，默认保留");
 
+static bool internal_sync;
+module_param(internal_sync, bool, 0644);
+MODULE_PARM_DESC(internal_sync, "诊断时将 B8 电源同步源改为内部 Hsync，默认保留厂家外部同步");
+
+static bool brightness_probe;
+module_param(brightness_probe, bool, 0644);
+MODULE_PARM_DESC(brightness_probe, "在 Command Mode 临时启用 BL，对照亮度长短包写入，默认关闭");
+
 struct fl7707n_cmd {
 	u8 len;
 	u8 data[64];
@@ -146,6 +154,9 @@ static int fl7707n_prepare(struct drm_panel *panel)
 			continue;
 
 		memcpy(data, cmd->data, cmd->len);
+		/* 仅切换同步源，保持电源类型、倍率、分频和软启动参数不变。 */
+		if (internal_sync && data[0] == 0xb8)
+			data[4] &= ~(BIT(1) | BIT(0));
 		/* 扩展寄存器长包留在 Command Mode；53 的 BCTRL/BL 仍保持复位关闭值。 */
 		if (data[0] == 0xc7)
 			data[1] |= BIT(7);
@@ -222,6 +233,28 @@ static int fl7707n_prepare(struct drm_panel *panel)
 	ret = mipi_dsi_dcs_write(ctx->dsi, 0x53, (u8[]) { 0x20 }, 1);
 	if (ret < 0)
 		goto prepare_failed;
+	if (brightness_probe) {
+		/* 在纯 Command Mode 对照长短包，避免视频消隐窗口干扰诊断。 */
+		ret = mipi_dsi_dcs_write(ctx->dsi, 0x53, (u8[]) { 0x24 }, 1);
+		if (ret < 0)
+			goto prepare_failed;
+		for (i = 0; i < 3; i++) {
+			u8 value = 0;
+			u8 payload[] = { 0x51, i == 1 ? 0x6a : 0x35, 0x35 };
+
+			ret = mipi_dsi_dcs_write_buffer(ctx->dsi, payload, i == 1 ? 2 : 3);
+			if (ret < 0)
+				goto prepare_failed;
+			msleep(5);
+			mipi_dsi_set_maximum_return_packet_size(ctx->dsi, 1);
+			ret = mipi_dsi_dcs_read(ctx->dsi, 0x52, &value, 1);
+			dev_info(dev, "Command Mode 51验证：参数数=%u 写入=%02x 回读ret=%zd value=%02x\n",
+				 i == 1 ? 1 : 2, payload[1], ret, value);
+		}
+		ret = mipi_dsi_dcs_write(ctx->dsi, 0x53, (u8[]) { 0x20 }, 1);
+		if (ret < 0)
+			goto prepare_failed;
+	}
 	/* 亮度长包也在 Command Mode 写入，Video Mode 仅发送短包开关背光。 */
 	ret = mipi_dsi_dcs_write(ctx->dsi, 0x51, (u8[]) { 0x80, 0x80 },
 				 brightness_bytes == 1 ? 1 : 2);
@@ -270,8 +303,8 @@ static int fl7707n_enable(struct drm_panel *panel)
 	ret = mipi_dsi_dcs_write(ctx->dsi, 0x53, (u8[]) { 0x24 }, 1);
 	if (ret < 0)
 		goto backlight_failed;
-	dev_info(&ctx->dsi->dev, "视频后背光命令已发送：video_before_on=%d skip_ef=%d backlight_only=%d\n",
-		 video_before_on, skip_ef, backlight_only);
+	dev_info(&ctx->dsi->dev, "视频后背光命令已发送：video_before_on=%d skip_ef=%d backlight_only=%d internal_sync=%d\n",
+		 video_before_on, skip_ef, backlight_only, internal_sync);
 	msleep(50);
 	fl7707n_host_status(ctx, "背光短包后");
 	/* 回读标准亮度和控制值，区分命令已发出与寄存器确实发生变化。 */
