@@ -1,10 +1,30 @@
 # FL7707N 双 DSI 点亮实验
 
-## 重要更新：CAM/DISP0 实测为 JD9365 系列接口
+## 2026-10-20 实机成功：Waveshare 4.0C 完整配置
+
+CAM/DISP0 已显示主机输出的七色彩条、白边及中央大号“0”，用户照片确认。
+使用参数 `jd9365_probe=1 jd9365_start=1 jd9365_ref_4in=1`；
+完整参考表见 `jd9365-waveshare-4in-init.h`，两通道 RGB888，
+主机时序 HFP/HSA/HBP=40/20/20、VFP/VSA/VBP=24/4/12、36.480MHz。
+保持上游表的 P1 40/41=04/64（800扫描行），不叠加旧720行和电源单项实验参数。
+背光额外使用标准51=80、53=24，与本板面板PWM连接配套。
+当前仅运行时加载；闪烁消失与否、冷启动及另一块屏幕仍待验证。
+
+```sh
+make -j4
+sudo insmod ./panel-fl7707n.ko jd9365_probe=1 jd9365_start=1 jd9365_ref_4in=1
+sudo dtoverlay -d . fl7707n-cam0
+sudo python3 show-pattern.py --fb 0 --pattern bars
+```
+
+参考配置关闭时保留原实验路径。切换前先移除对应overlay并卸载模块；
+未修改开机配置。更详细的验证记录见 `AUDIT-JD9365-20261020.md`。
+
+## 历史记录：CAM/DISP0 实测为 JD9365 系列接口
 
 后续按手册完成720×720扫描尺寸与外部电源模式的单项对照：
 `jd9365_tcon_720=1`将页1的40/41设为04/5A；`jd9365_power_nt=1`仅将页1的55低四位设为02。
-两者默认0，实机当前均开启；0A仍1C，现场画面变化待确认。
+两者默认0，历史单项实验均开启过；当前已由上面的完整Waveshare配置替代。
 用户此前已确认JD最小配置背光亮，但只有均匀背光。
 FL/JD功能对应、单位和实测依据见[FL7707N-JD9365-MAPPING.md](FL7707N-JD9365-MAPPING.md)。
 

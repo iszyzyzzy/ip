@@ -67,6 +67,10 @@ static bool jd9365_power_nt;
 module_param(jd9365_power_nt, bool, 0644);
 MODULE_PARM_DESC(jd9365_power_nt, "JD实验：将页1的55低四位设为2，选择外部NT电源IC模式，保留电压/倍率参数");
 
+static bool jd9365_ref_4in;
+module_param(jd9365_ref_4in, bool, 0444);
+MODULE_PARM_DESC(jd9365_ref_4in, "配合JD识别启动，完整采用Waveshare 4.0C初始化表和主机时序");
+
 struct fl7707n_cmd {
 	u8 len;
 	u8 data[64];
@@ -75,6 +79,7 @@ struct fl7707n_cmd {
 
 /* 厂家两通道初始化表单独生成，避免手工抄写 GIP 和 Gamma 参数。 */
 #include "fl7707n-init.h"
+#include "jd9365-waveshare-4in-init.h"
 
 static const struct drm_display_mode fl7707n_mode = {
 	.clock = 48989,
@@ -89,6 +94,18 @@ static const struct drm_display_mode fl7707n_mode = {
 	.width_mm = 102,
 	.height_mm = 102,
 };
+
+static const struct drm_display_mode jd9365_waveshare_mode = {
+	.clock = 36480,
+	.hdisplay = 720, .hsync_start = 760, .hsync_end = 780, .htotal = 800,
+	.vdisplay = 720, .vsync_start = 744, .vsync_end = 748, .vtotal = 760,
+	.width_mm = 88, .height_mm = 88,
+};
+
+static const struct drm_display_mode *fl7707n_selected_mode(void)
+{
+	return jd9365_ref_4in ? &jd9365_waveshare_mode : &fl7707n_mode;
+}
 
 static struct fl7707n *to_fl7707n(struct drm_panel *panel)
 {
@@ -191,6 +208,37 @@ static int fl7707n_jd9365_timing_status(struct fl7707n *ctx, const char *stage)
 	return mipi_dsi_dcs_write(ctx->dsi, 0xe0, (u8[]) { 0 }, 1);
 }
 
+static int fl7707n_start_jd9365_waveshare(struct fl7707n *ctx)
+{
+	unsigned int i;
+	int ret;
+
+	for (i = 0; i < ARRAY_SIZE(jd9365_waveshare_4in_init); i++) {
+		ret = mipi_dsi_dcs_write_buffer(ctx->dsi,
+			jd9365_waveshare_4in_init[i], 2);
+		if (ret < 0)
+			return ret;
+	}
+	ret = mipi_dsi_dcs_exit_sleep_mode(ctx->dsi);
+	if (ret < 0)
+		return ret;
+	msleep(120);
+	ret = mipi_dsi_dcs_set_display_on(ctx->dsi);
+	if (ret < 0)
+		return ret;
+	msleep(5);
+	ret = mipi_dsi_dcs_set_tear_on(ctx->dsi, MIPI_DSI_DCS_TEAR_MODE_VBLANK);
+	if (ret < 0)
+		return ret;
+	/* 上游背光由外部管理；本板使用面板PWM，保持已验证的半亮度。 */
+	ret = mipi_dsi_dcs_write(ctx->dsi, 0x51, (u8[]) { 0x80 }, 1);
+	if (ret < 0)
+		return ret;
+	dev_info(&ctx->dsi->dev, "Waveshare 4.0C完整表已发送：%zu条，两通道，36480kHz\n",
+		 ARRAY_SIZE(jd9365_waveshare_4in_init));
+	return fl7707n_jd9365_timing_status(ctx, "Waveshare初始化后");
+}
+
 static int fl7707n_start_jd9365(struct fl7707n *ctx)
 {
 	static const u8 cmds[][2] = {
@@ -200,6 +248,9 @@ static int fl7707n_start_jd9365(struct fl7707n *ctx)
 	static const u8 regs[] = { 0x80, 0x0a, 0x0c, 0x54, 0x52 };
 	unsigned int i;
 	int ret;
+
+	if (jd9365_ref_4in)
+		return fl7707n_start_jd9365_waveshare(ctx);
 
 	ret = fl7707n_jd9365_timing_status(ctx, "复位后");
 	if (ret < 0)
@@ -472,7 +523,7 @@ static int fl7707n_enable(struct drm_panel *panel)
 
 	/* 先给外部 Hsync 同步电源留出稳定时间，期间不插入 BTA 回读。 */
 	msleep(video_before_on || jd9365_probe ? 120 : 50);
-	if ((video_before_on || jd9365_probe) && !backlight_only) {
+	if ((video_before_on || jd9365_probe) && !backlight_only && !jd9365_ref_4in) {
 		ret = mipi_dsi_dcs_set_display_on(ctx->dsi);
 		if (ret < 0)
 			goto backlight_failed;
@@ -535,15 +586,16 @@ static int fl7707n_get_modes(struct drm_panel *panel,
 			    struct drm_connector *connector)
 {
 	struct drm_display_mode *mode;
+	const struct drm_display_mode *selected = fl7707n_selected_mode();
 
-	mode = drm_mode_duplicate(connector->dev, &fl7707n_mode);
+	mode = drm_mode_duplicate(connector->dev, selected);
 	if (!mode)
 		return -ENOMEM;
 	drm_mode_set_name(mode);
 	mode->type = DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED;
 	drm_mode_probed_add(connector, mode);
-	connector->display_info.width_mm = fl7707n_mode.width_mm;
-	connector->display_info.height_mm = fl7707n_mode.height_mm;
+	connector->display_info.width_mm = selected->width_mm;
+	connector->display_info.height_mm = selected->height_mm;
 	connector->display_info.bpc = 8;
 	return 1;
 }
@@ -561,6 +613,8 @@ static int fl7707n_probe(struct mipi_dsi_device *dsi)
 	struct fl7707n *ctx;
 	int ret;
 
+	if (jd9365_ref_4in && (!jd9365_probe || !jd9365_start))
+		return -EINVAL;
 	ctx = devm_kzalloc(&dsi->dev, sizeof(*ctx), GFP_KERNEL);
 	if (!ctx)
 		return -ENOMEM;
@@ -574,6 +628,9 @@ static int fl7707n_probe(struct mipi_dsi_device *dsi)
 	dsi->mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_VIDEO_SYNC_PULSE |
 			  MIPI_DSI_MODE_LPM | MIPI_DSI_CLOCK_NON_CONTINUOUS |
 			  MIPI_DSI_MODE_NO_EOT_PACKET;
+	if (jd9365_ref_4in)
+		dsi->mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_VIDEO_HSE |
+			MIPI_DSI_MODE_LPM | MIPI_DSI_CLOCK_NON_CONTINUOUS;
 	if (of_device_is_compatible(dsi->host->dev->of_node, "raspberrypi,rp1dsi")) {
 		struct resource *res = platform_get_resource(to_platform_device(dsi->host->dev),
 							 IORESOURCE_MEM, 1);
