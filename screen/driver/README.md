@@ -7,6 +7,12 @@
 
 ## 2026-10-20 时序修正及资料核查
 
+最新单屏对照增加 video_before_on=1：视频启动后静置120ms，发送29并等150ms，
+开背光后等50ms再读取状态；skip_ef=1可独立跳过厂家EF命令（默认仍保留）。
+两组实测0A仍为18，05=00、0E=00、0F=C0，没有使Display On状态位改变，尚未修复黑屏。
+当前实验保留video_before_on=1、skip_ef=0、backlight_only=0，仅运行时加载，无循环。
+详细结果与主机FIFO源码核查见下方最新记录；后文按日期保留的旧流程不代表当前代码。
+
 **最新实测更新：** 见 [LP-11 与回读恢复记录](AUDIT-LP11-20261020.md)。
 仅设置 prepare_prev_first 并不能保证时钟 LP-11；加入 MIPI_DSI_CLOCK_NON_CONTINUOUS 后，
 首次成功读到 ID `93 65 04`、复位状态 `08`、Sleep Out 后状态 `18`。

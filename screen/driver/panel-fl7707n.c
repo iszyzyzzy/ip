@@ -35,6 +35,14 @@ static bool backlight_only;
 module_param(backlight_only, bool, 0644);
 MODULE_PARM_DESC(backlight_only, "保持 Display Off，仅按手册公开的 C7/C8 参数测试背光 PWM");
 
+static bool video_before_on = true;
+module_param(video_before_on, bool, 0644);
+MODULE_PARM_DESC(video_before_on, "先启动视频并等待 120 ms，再发送 Display On，供同步电源时序对照");
+
+static bool skip_ef;
+module_param(skip_ef, bool, 0644);
+MODULE_PARM_DESC(skip_ef, "诊断时跳过厂家 EF 命令，其含义尚未确认，默认保留");
+
 struct fl7707n_cmd {
 	u8 len;
 	u8 data[64];
@@ -131,7 +139,10 @@ static int fl7707n_prepare(struct drm_panel *panel)
 		u8 data[64];
 		size_t len = cmd->len;
 
-		if (backlight_only && cmd->data[0] == MIPI_DCS_SET_DISPLAY_ON)
+		if ((backlight_only || video_before_on) &&
+		    cmd->data[0] == MIPI_DCS_SET_DISPLAY_ON)
+			continue;
+		if (skip_ef && cmd->data[0] == 0xef)
 			continue;
 
 		memcpy(data, cmd->data, cmd->len);
@@ -226,7 +237,8 @@ static int fl7707n_prepare(struct drm_panel *panel)
 	mipi_dsi_set_maximum_return_packet_size(ctx->dsi, 1);
 	ret = mipi_dsi_dcs_read(ctx->dsi, 0x0a, &status, 1);
 	dev_info(dev, "初始化完成（%s），电源状态回读: ret=%zd value=0x%02x\n",
-		 backlight_only ? "Display Off 独立 PWM 测试" : "Display On 后等待 150 ms",
+		 backlight_only ? "Display Off 独立 PWM 测试" :
+		 video_before_on ? "等待视频阶段发送 Display On" : "Display On 后等待 150 ms",
 		 ret, status);
 	fl7707n_host_status(ctx, "初始化后读0A后");
 	if (meter_ms && ctx->rp1_regs)
@@ -245,19 +257,27 @@ static int fl7707n_enable(struct drm_panel *panel)
 	struct fl7707n *ctx = to_fl7707n(panel);
 	int ret;
 	unsigned int i;
-	static const u8 commands[] = { 0x0a, 0x54, 0x52, 0xc7 };
+	static const u8 commands[] = { 0x0a, 0x54, 0x52, 0xc7, 0x05, 0x0e, 0x0f };
 
-	/* RP1 在 panel enable 前启动视频；留 50 ms，超过图中的 33.2 ms。 */
-	msleep(50);
+	/* 先给外部 Hsync 同步电源留出稳定时间，期间不插入 BTA 回读。 */
+	msleep(video_before_on ? 120 : 50);
+	if (video_before_on && !backlight_only) {
+		ret = mipi_dsi_dcs_set_display_on(ctx->dsi);
+		if (ret < 0)
+			goto backlight_failed;
+		msleep(150);
+	}
 	ret = mipi_dsi_dcs_write(ctx->dsi, 0x53, (u8[]) { 0x24 }, 1);
 	if (ret < 0)
 		goto backlight_failed;
-	dev_info(&ctx->dsi->dev, "视频启动后等待 50 ms，背光 PWM 开启命令已发送，亮度 0x80\n");
+	dev_info(&ctx->dsi->dev, "视频后背光命令已发送：video_before_on=%d skip_ef=%d backlight_only=%d\n",
+		 video_before_on, skip_ef, backlight_only);
+	msleep(50);
 	fl7707n_host_status(ctx, "背光短包后");
 	/* 回读标准亮度和控制值，区分命令已发出与寄存器确实发生变化。 */
 	for (i = 0; i < ARRAY_SIZE(commands); i++) {
 		u8 value[2] = { 0 };
-		size_t len = i < 2 ? 1 : 2;
+		size_t len = commands[i] == 0x52 || commands[i] == 0xc7 ? 2 : 1;
 
 		mipi_dsi_set_maximum_return_packet_size(ctx->dsi, len);
 		ret = mipi_dsi_dcs_read(ctx->dsi, commands[i], value, len);
