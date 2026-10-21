@@ -1,5 +1,20 @@
 # FL7707N 双 DSI 点亮实验
 
+## 独立安装重启日志与供电监测
+
+2026-10-21排查发现树莓派系统配置 `Storage=volatile`，重启后无法读取上次启动日志。
+仅记录问题、暂不配置显示开机启动时，使用独立安装脚本：
+
+```sh
+sudo sh install-logging.sh
+sudo journalctl -k -b -1
+sudo journalctl -u screen-monitor.service -b -1
+```
+
+脚本设置持久journal（上限128MiB、同步间隔5秒），只启用供电监测服务开机运行，
+不改显示模块、overlay、桌面启动策略或 `/boot/firmware/config.txt`。
+首次安装前的易失日志不能补回；突然断电仍可能丢失最后尚未落盘的记录。
+
 ## 2026-10-20 实机成功：Waveshare 4.0C 完整配置
 
 CAM/DISP0 已显示主机输出的七色彩条、白边及中央大号“0”，用户照片确认。
