@@ -22,6 +22,10 @@ service RobotControl {
   rpc DeleteAction(ActionDelete) returns (Ack);
   rpc RunAction(RunRequest) returns (Ack);
   rpc CancelAction(LeaseRequest) returns (Ack);
+  // 首包为 header，其余为 PCM；发送端半关闭后播放完尾部再返回。
+  rpc PlayAudio(stream AudioPacket) returns (AudioStatus);
+  rpc GetAudioState(Empty) returns (AudioStatus);
+  rpc StopAudio(Empty) returns (AudioStatus);
 }
 message Empty {}
 message Ack { uint64 revision = 1; }
@@ -64,6 +68,7 @@ message RobotState {
   string action = 9;
   string fault = 10;
   google.protobuf.Struct devices = 11;
+  AudioStatus audio = 12;
 }
 message ActionStep { uint32 at_ms = 1; Targets targets = 2; }
 // 时间点发送目标，不做机器人逆运动学；结束、取消或失去租约后停止。
@@ -73,3 +78,25 @@ message ActionList { repeated ActionRecord actions = 1; }
 message ActionUpdate { uint64 expected_revision = 1; Action action = 2; }
 message ActionDelete { string name = 1; uint64 expected_revision = 2; }
 message RunRequest { string token = 1; string name = 2; }
+
+// PCM 有符号 16 位小端，双声道时交错排列。采样率必须与上游一致。
+message AudioHeader { uint32 sample_rate_hz = 1; uint32 channels = 2; }
+message AudioPacket {
+  oneof payload { AudioHeader header = 1; bytes pcm = 2; }
+}
+message AudioStatus {
+  string stream_id = 1;
+  string phase = 2;
+  bool simulated = 3;
+  uint32 sample_rate_hz = 4;
+  uint32 channels = 5;
+  double buffered_ms = 6;
+  double peak_buffered_ms = 7;
+  uint64 received_frames = 8;
+  uint64 submitted_frames = 9;
+  uint64 silence_frames = 10;
+  uint64 rebuffer_count = 11;
+  double start_latency_ms = 12;
+  double device_buffer_ms = 13;
+  string error = 14;
+}

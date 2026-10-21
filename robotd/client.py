@@ -1,15 +1,19 @@
 """robotctl：配置、调试和动作开发命令行。"""
 from __future__ import annotations
+
 import argparse
 import json
 import os
-from pathlib import Path
 import threading
 import time
+from pathlib import Path
+
 import grpc
 from google.protobuf.json_format import MessageToDict, ParseDict
+
 from .config import default_config
-from .pb import robot_pb2 as pb, robot_pb2_grpc as pg
+from .pb import robot_pb2 as pb
+from .pb import robot_pb2_grpc as pg
 
 
 def show(message):
@@ -98,7 +102,7 @@ def main():
         if os.environ.get("ROBOTD_API_TOKEN") else ()
     with grpc.insecure_channel(args.target, options=[("grpc.enable_http_proxy", 0)]) as channel:
         stub = pg.RobotControlStub(channel)
-        options = dict(timeout=5, metadata=metadata)
+        options = {"timeout": 5, "metadata": metadata}
         if args.command == "state":
             show(stub.GetState(pb.Empty(), **options))
         elif args.command == "watch":

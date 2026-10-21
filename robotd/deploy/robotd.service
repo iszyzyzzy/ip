@@ -5,14 +5,13 @@ After=network.target
 [Service]
 Type=simple
 User=robot
-SupplementaryGroups=dialout
+SupplementaryGroups=dialout audio
 WorkingDirectory=/opt/robot
-ExecStart=/opt/robot/.venv/bin/robotd --db /var/lib/robotd/robotd.sqlite
+ExecStart=/opt/robot/bin/robotd --db /var/lib/robotd/robotd.sqlite
 StateDirectory=robotd
 Restart=on-failure
 RestartSec=2
 TimeoutStopSec=15
-Environment=PYTHONUNBUFFERED=1
 
 [Install]
 WantedBy=multi-user.target

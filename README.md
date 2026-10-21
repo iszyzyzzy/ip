@@ -1,6 +1,6 @@
 # 机器人控制工程
 
-[robotd](robotd/README.md) 提供统一 gRPC 控制、SQLite 权威配置与动作存储，连接 H7、双臂总线舵机和眼屏。
+[robotd](robotd/README.md) 是 Rust 实现的统一 gRPC 控制中枢，使用 SQLite 存储权威配置与动作，连接 H7、双臂总线舵机、眼屏和 TAS5756M I²S 喇叭；音频使用低延迟有界缓冲。
 
 [robot-remote](robot_remote/README.md) 独立运行 HTTP/WebSocket 遥控服务，为网页提供状态推送、控制会话、运动目标和动作接口，通过 gRPC 连接 robotd。
 

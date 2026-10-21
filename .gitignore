@@ -10,3 +10,4 @@ robotd.sqlite*
 build/
 dist/
 robotd/generated-config.json
+robotd-rs/target/

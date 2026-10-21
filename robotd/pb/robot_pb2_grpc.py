@@ -115,6 +115,21 @@ class RobotControlStub:
                 request_serializer=robot__pb2.LeaseRequest.SerializeToString,
                 response_deserializer=robot__pb2.Ack.FromString,
                 _registered_method=True)
+        self.PlayAudio = channel.stream_unary(
+                '/robot.v1.RobotControl/PlayAudio',
+                request_serializer=robot__pb2.AudioPacket.SerializeToString,
+                response_deserializer=robot__pb2.AudioStatus.FromString,
+                _registered_method=True)
+        self.GetAudioState = channel.unary_unary(
+                '/robot.v1.RobotControl/GetAudioState',
+                request_serializer=robot__pb2.Empty.SerializeToString,
+                response_deserializer=robot__pb2.AudioStatus.FromString,
+                _registered_method=True)
+        self.StopAudio = channel.unary_unary(
+                '/robot.v1.RobotControl/StopAudio',
+                request_serializer=robot__pb2.Empty.SerializeToString,
+                response_deserializer=robot__pb2.AudioStatus.FromString,
+                _registered_method=True)
 
 
 class RobotControlServicer:
@@ -218,6 +233,25 @@ class RobotControlServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def PlayAudio(self, request_iterator, context):
+        """首包为 header，其余为 PCM；发送端半关闭后播放完尾部再返回。
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetAudioState(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def StopAudio(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_RobotControlServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -300,6 +334,21 @@ def add_RobotControlServicer_to_server(servicer, server):
                     servicer.CancelAction,
                     request_deserializer=robot__pb2.LeaseRequest.FromString,
                     response_serializer=robot__pb2.Ack.SerializeToString,
+            ),
+            'PlayAudio': grpc.stream_unary_rpc_method_handler(
+                    servicer.PlayAudio,
+                    request_deserializer=robot__pb2.AudioPacket.FromString,
+                    response_serializer=robot__pb2.AudioStatus.SerializeToString,
+            ),
+            'GetAudioState': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetAudioState,
+                    request_deserializer=robot__pb2.Empty.FromString,
+                    response_serializer=robot__pb2.AudioStatus.SerializeToString,
+            ),
+            'StopAudio': grpc.unary_unary_rpc_method_handler(
+                    servicer.StopAudio,
+                    request_deserializer=robot__pb2.Empty.FromString,
+                    response_serializer=robot__pb2.AudioStatus.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -735,6 +784,87 @@ class RobotControl:
             '/robot.v1.RobotControl/CancelAction',
             robot__pb2.LeaseRequest.SerializeToString,
             robot__pb2.Ack.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def PlayAudio(request_iterator,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.stream_unary(
+            request_iterator,
+            target,
+            '/robot.v1.RobotControl/PlayAudio',
+            robot__pb2.AudioPacket.SerializeToString,
+            robot__pb2.AudioStatus.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetAudioState(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/robot.v1.RobotControl/GetAudioState',
+            robot__pb2.Empty.SerializeToString,
+            robot__pb2.AudioStatus.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def StopAudio(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/robot.v1.RobotControl/StopAudio',
+            robot__pb2.Empty.SerializeToString,
+            robot__pb2.AudioStatus.FromString,
             options,
             channel_credentials,
             insecure,

@@ -1,411 +1,237 @@
-import copy
-from concurrent import futures
+"""用既有 Python gRPC 协议联调真实 Rust daemon。"""
 import json
-from pathlib import Path
-import struct
-import tempfile
+import sqlite3
+import threading
 import time
 import unittest
-from unittest.mock import patch
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import grpc
-from google.protobuf.json_format import ParseDict
-from h7.tools.dm_can import Bridge, Packet, ACK, RX, TX_RESULT, TX, INFO, MOTOR_STATUS
-from robotd.config import default_config, validate_config
-from robotd.control import Controller, ControlError
-from robotd.drivers import Hardware, ServoBus, Simulated, chassis_payload, decode_chassis
-from robotd.pb import robot_pb2 as pb, robot_pb2_grpc as pg
-from robotd.pb import eyes_pb2 as ep, eyes_pb2_grpc as eg
-from robotd.server import Service, InstanceLock
-from robotd.store import Store, Conflict
-from robotd.validation import validate_targets
+from google.protobuf.json_format import MessageToDict, ParseDict
+
+from robotd.audio_client import tts_packets
+from robotd.config import default_config
+from robotd.pb import robot_pb2 as pb
+from robotd.tests.support import ROOT, RustDaemon
 
 
-class ServoSerial:
-    def __init__(self):
-        self.events = []
-        self.buffer = bytearray()
-        self.responses = []
-        self.closed = False
-
-    @property
-    def in_waiting(self):
-        return len(self.buffer)
-
-    @property
-    def rts(self):
-        return self._rts
-
-    @rts.setter
-    def rts(self, value):
-        self.events.append(("rts", value))
-        self._rts = value
-
-    def write(self, wire):
-        self.events.append(("write", wire))
-        if wire.endswith(b"PRAD!"):
-            self.buffer.extend(wire + wire[:5] + b"1500!")
-        return len(wire)
-
-    def flush(self):
-        self.events.append(("drain",))
-
-    def reset_input_buffer(self):
-        self.buffer.clear()
-
-    def read(self, size):
-        data = bytes(self.buffer[:size])
-        del self.buffer[:size]
-        return data
-
-    def close(self):
-        self.closed = True
-
-
-class H7Serial:
-    def __init__(self):
-        self.buffer = bytearray()
-        self.packets = []
-        self.closed = False
-
-    @property
-    def in_waiting(self):
-        return len(self.buffer)
-
-    def write(self, wire):
-        if wire == b"\0":
-            return 1
-        p = Packet.decode(wire[:-1])
-        self.packets.append(p)
-        extra = b""
-        if p.type == INFO:
-            extra = bytes([1, 1, 0, 3, 64, 16, 0, 0]) + b"DM-H723"
-        elif p.type == MOTOR_STATUS:
-            extra = b"".join(struct.pack("<BBBBfffffII", i, 0, 0, 30, 0, 0, 0, 0, 0, 5, 0)
-                             for i in (1, 2)) + bytes(4)
-        if p.type == TX:
-            can_id = struct.unpack_from("<I", p.payload)[0]
-            data = p.payload[5:]
-            if can_id == 0x141:
-                self.rx(0x291, bytes([data[0], 0, 0]))
-            if can_id == 0x421:
-                self.rx(0x211, struct.pack(">BBHI", 0, 1, 240, 0))
-            self.buffer.extend(Packet(TX_RESULT, p.channel, sequence=p.sequence,
-                                      payload=bytes(5)).encode())
-        self.buffer.extend(Packet(ACK, p.channel, sequence=p.sequence,
-                                  payload=bytes([p.type, 0]) + extra).encode())
-        return len(wire)
-
-    def rx(self, can_id, data, channel=2):
-        self.buffer.extend(Packet(RX, channel, payload=struct.pack("<IIB", can_id, 10, len(data))
-                                  + data).encode())
-
-    def read(self, size):
-        # 验证真实 Bridge 解析拆分后的 CDC 报文，而不是直接伪造 API 返回值。
-        size = min(size, 7)
-        data = bytes(self.buffer[:size])
-        del self.buffer[:size]
-        return data
-
-    def close(self):
-        self.closed = True
-
-
-class ProtocolTests(unittest.TestCase):
-    def test_ranger_document_vectors_and_feedback(self):
-        self.assertEqual(chassis_payload(pb.ChassisTarget(speed_m_s=0.15)).hex(),
-                         "0096000000000000")
-        self.assertEqual(chassis_payload(pb.ChassisTarget(steering_rad=1)).hex(),
-                         "00000000000003e8")
-        key, value = decode_chassis(0x211, bytes.fromhex("000100f000000080"))
-        self.assertEqual((key, value["voltage_v"], value["fault_bits"]), ("system", 24, 128))
-        self.assertIsNone(decode_chassis(0x211, b"\0"))
-        self.assertEqual(decode_chassis(0x221, bytes.fromhex("ff6aff3800000064"))[1],
-            dict(speed_m_s=-0.15, yaw_rate_rad_s=-0.2, steering_raw_rad=0.1))
-
-    def test_rts_drain_release_and_echo(self):
-        cfg = default_config()["left_arm"]
-        transport = ServoSerial()
-        bus = ServoBus(cfg, transport)
-        transport.events.clear()
-        bus.position(pb.ArmTarget(joint_rad=[0, 0, 0, 0], duration_ms=500))
-        self.assertEqual(transport.events[:4], [("rts", True),
-            ("write", b"#000P1500T0500!"), ("drain",), ("rts", False)])
-        self.assertEqual(bus.read_position(0)["position_rad"], 0)
-        transport.write = lambda _: (_ for _ in ()).throw(IOError("写入失败"))
-        with self.assertRaises(IOError):
-            bus.send(b"#000PDST!")
-        self.assertFalse(transport.rts)
-        bus.close()
-        self.assertTrue(transport.closed)
-
-    def test_h7_real_bridge_and_mode_feedback_gate(self):
-        cfg = default_config()
-        cfg["eyes"]["enabled"] = False
-        cfg["left_arm"]["enabled"] = cfg["right_arm"]["enabled"] = False
-        transport = H7Serial()
-        bridge = Bridge("test", transport=transport, timeout=0.1)
-        with patch("robotd.drivers.Bridge", return_value=bridge), \
-                patch("robotd.drivers.serial.Serial", return_value=transport):
-            hardware = Hardware(cfg)
-            hardware.connect()
-            target = pb.ChassisTarget(mode=pb.ACKERMANN, speed_m_s=0.15, ttl_ms=300)
-            now = time.monotonic()
-            hardware.chassis(target, now)
-            self.assertFalse(hardware.state["chassis"]["ready"])
-            hardware.poll(now + 0.01)
-            hardware.chassis(target, now + 0.02)
-            self.assertTrue(hardware.state["chassis"]["ready"])
-            motion = [p for p in transport.packets if p.type == TX
-                      and struct.unpack_from("<I", p.payload)[0] == 0x111]
-            self.assertEqual(motion[-1].payload[5:], bytes.fromhex("0096000000000000"))
-            hardware.chassis(target, now + 1)
-            self.assertFalse(hardware.state["chassis"]["ready"])
-            self.assertEqual(transport.packets[-1].payload[5:], bytes(8))
-            hardware.close()
-            self.assertTrue(transport.closed)
-
-    def test_whole_command_validation_and_limits(self):
-        cfg = default_config()
-        cases = [pb.Targets(neck=pb.NeckTarget(yaw_rad=float("nan"))),
-                 pb.Targets(chassis=pb.ChassisTarget(mode=pb.SPIN, speed_m_s=0.1, ttl_ms=300)),
-                 pb.Targets(left_arm=pb.ArmTarget(joint_rad=[0, 0, 0], duration_ms=500)),
-                 pb.Targets(neck=pb.NeckTarget(yaw_rad=0.8)), pb.Targets()]
-        for target in cases:
-            with self.subTest(target=target), self.assertRaises(ValueError):
-                validate_targets(target, cfg)
-        cfg["chassis"]["max_speed_m_s"] = 1.5
-        with self.assertRaises(ValueError):
-            validate_targets(pb.Targets(chassis=pb.ChassisTarget(
-                speed_m_s=0.6, steering_rad=0.4, ttl_ms=300)), cfg)
-        validate_targets(pb.Targets(neck=pb.NeckTarget(yaw_rad=0)), cfg)
-
-
-class StoreTests(unittest.TestCase):
-    def test_persistence_conflict_and_invalid_config(self):
-        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[2]) as tmp:
-            path = Path(tmp) / "robot.sqlite"
-            store = Store(path)
-            rev, cfg = store.config()
-            cfg["metadata"]["name"] = "机器人"
-            self.assertEqual(store.update_config(rev, cfg)[0], 2)
-            with self.assertRaises(Conflict):
-                store.update_config(rev, cfg)
-            bad = copy.deepcopy(cfg)
-            bad["left_arm"]["joints"][1]["id"] = 0
-            with self.assertRaises(ValueError):
-                store.update_config(2, bad)
-            bad = copy.deepcopy(cfg)
-            bad["eyes"]["settings"]["jelly"]["frequency"] = 100
-            with self.assertRaises(ValueError):
-                validate_config(bad)
-            store.close()
-            store = Store(path)
-            self.assertEqual(store.config(), (2, cfg))
-            store.close()
-
-    def test_action_delete_keeps_revision_and_instance_lock(self):
-        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[2]) as tmp:
-            path = Path(tmp) / "robot.sqlite"
-            store = Store(path)
-            value = {"name": "test"}
-            self.assertEqual(store.put_action("test", 0, value), 1)
-            self.assertEqual(store.delete_action("test", 1), 2)
-            with self.assertRaises(Conflict):
-                store.put_action("test", 0, value)
-            self.assertEqual(store.put_action("test", 2, value), 3)
-            store.close()
-            lock = InstanceLock(path)
-            try:
-                with self.assertRaises(RuntimeError):
-                    InstanceLock(path)
-            finally:
-                lock.close()
-            InstanceLock(path).close()
-
-
-class ControlTests(unittest.TestCase):
+class RobotTests(unittest.TestCase):
     def setUp(self):
-        self.now = 100.0
-        self.store = Store(":memory:")
-        self.control = Controller(self.store, simulated=True, clock=lambda: self.now)
-        self.control.reconnect()
+        self.backend = RustDaemon()
+        self.stub = self.backend.stub
 
     def tearDown(self):
-        self.store.close()
+        self.backend.close()
 
-    def lease(self, ttl=1000):
-        return self.control.acquire(pb.AcquireRequest(owner="test", ttl_ms=ttl))
+    def enable_audio(self):
+        cfg = self.stub.GetConfig(pb.Empty(), timeout=3)
+        cfg.config["audio"]["enabled"] = True
+        return self.stub.UpdateConfig(pb.ConfigUpdate(expected_revision=cfg.revision,
+                                                      config=cfg.config), timeout=3)
 
-    def test_exclusive_lease_and_independent_chassis_ttl(self):
-        lease = self.lease()
-        with self.assertRaises(ControlError):
-            self.lease()
-        self.control.set_targets(pb.TargetRequest(token=lease.token,
-            targets=pb.Targets(chassis=pb.ChassisTarget(speed_m_s=0.1, ttl_ms=100))))
-        self.now += 0.11
-        self.control.renew(pb.LeaseRequest(token=lease.token))
-        self.control.tick()
-        self.assertIsNone(self.control.chassis_target)
-        self.assertIsNotNone(self.control.lease)
-        self.assertEqual(self.control.driver.state["events"][-1]["operation"], "stop_chassis")
-        self.now += 1.01
-        self.control.tick()
-        self.assertIsNone(self.control.lease)
-        self.assertTrue(self.control.stopped)
+    def wait_audio(self, predicate):
+        end = time.monotonic() + 2
+        while time.monotonic() < end:
+            state = self.stub.GetAudioState(pb.Empty(), timeout=1)
+            if predicate(state):
+                return state
+            time.sleep(0.005)
+        self.fail(f"音频状态未满足条件：{state}")
 
-    def test_latched_stop_and_stale_token(self):
-        lease = self.lease()
-        self.control.stop(pb.StopRequest(latch=True))
-        with self.assertRaises(ControlError):
-            self.control.set_targets(pb.TargetRequest(token=lease.token,
-                targets=pb.Targets(neck=pb.NeckTarget(yaw_rad=0))))
-        with self.assertRaises(ControlError):
-            self.lease()
-        new = self.control.acquire(pb.AcquireRequest(owner="new", ttl_ms=1000, clear_latch=True))
-        self.assertNotEqual(new.token, lease.token)
+    def test_motion_config_actions_and_persistence(self):
+        cfg = self.stub.GetConfig(pb.Empty(), timeout=3)
+        self.assertEqual(cfg.config["schema_version"], 2)
+        cfg.config["metadata"]["name"] = "Rust 机器人"
+        self.stub.UpdateConfig(pb.ConfigUpdate(expected_revision=cfg.revision, config=cfg.config), timeout=3)
+        with self.assertRaises(grpc.RpcError) as conflict:
+            self.stub.UpdateConfig(pb.ConfigUpdate(expected_revision=cfg.revision, config=cfg.config), timeout=3)
+        self.assertEqual(conflict.exception.code(), grpc.StatusCode.ABORTED)
+        lease = self.stub.AcquireControl(pb.AcquireRequest(owner="test", ttl_ms=1000), timeout=3)
+        target = pb.TargetRequest(token=lease.token, targets=pb.Targets(
+            neck=pb.NeckTarget(yaw_rad=0.1), chassis=pb.ChassisTarget(speed_m_s=0.15, ttl_ms=100)))
+        self.stub.SetTargets(target, timeout=3)
+        time.sleep(0.13)
+        self.stub.RenewControl(pb.LeaseRequest(token=lease.token), timeout=3)
+        state = self.backend.state()
+        events = MessageToDict(state.devices)["events"]
+        self.assertIn("stop_chassis", [e["operation"] for e in events])
+        self.assertEqual(state.owner, "test")
+        invalid = pb.TargetRequest(token=lease.token, targets=pb.Targets(
+            neck=pb.NeckTarget(yaw_rad=0.1), left_arm=pb.ArmTarget(joint_rad=[10]*4, duration_ms=100)))
+        with self.assertRaises(grpc.RpcError) as bad:
+            self.stub.SetTargets(invalid, timeout=3)
+        self.assertEqual(bad.exception.code(), grpc.StatusCode.INVALID_ARGUMENT)
+        action = ParseDict(json.loads((ROOT / "robotd/examples/greeting.json").read_text()), pb.Action())
+        self.stub.PutAction(pb.ActionUpdate(action=action), timeout=3)
+        self.stub.RunAction(pb.RunRequest(token=lease.token, name=action.name), timeout=3)
+        self.stub.CancelAction(pb.LeaseRequest(token=lease.token), timeout=3)
+        action.duration_ms = 100
+        del action.steps[1:]
+        self.stub.PutAction(pb.ActionUpdate(action=action, expected_revision=1), timeout=3)
+        self.stub.RunAction(pb.RunRequest(token=lease.token, name=action.name), timeout=3)
+        end = time.monotonic() + 1
+        while self.backend.state().action and time.monotonic() < end:
+            time.sleep(0.01)
+        self.assertTrue(self.backend.state().stopped)
+        self.assertFalse(self.backend.state().action)
+        self.stub.DeleteAction(pb.ActionDelete(name=action.name, expected_revision=2), timeout=3)
+        self.assertTrue(self.stub.ListActions(pb.Empty(), timeout=3).actions[0].deleted)
+        self.stub.Stop(pb.StopRequest(latch=True), timeout=3)
+        self.assertTrue(self.backend.state().latched)
+        self.assertFalse(self.backend.state().owner)
+        self.backend.stop()
+        self.backend.start()
+        cfg = self.backend.stub.GetConfig(pb.Empty(), timeout=3)
+        self.assertEqual(cfg.config["metadata"]["name"], "Rust 机器人")
+        self.assertTrue(self.backend.stub.ListActions(pb.Empty(), timeout=3).actions[0].deleted)
+        self.assertTrue(self.backend.state().stopped)
 
-    def test_action_timing_cancel_and_validation_before_io(self):
-        action = pb.Action(name="test", duration_ms=1000, steps=[
-            pb.ActionStep(at_ms=0, targets=pb.Targets(neck=pb.NeckTarget(yaw_rad=0.1))),
-            pb.ActionStep(at_ms=500, targets=pb.Targets(neck=pb.NeckTarget(pitch_rad=0.1)))])
-        self.control.put_action(pb.ActionUpdate(action=action))
-        lease = self.lease(ttl=3000)
-        self.control.run_action(pb.RunRequest(token=lease.token, name="test"))
-        self.control.tick()
-        self.assertEqual(self.control.action_index, 1)
-        self.now += 0.5
-        self.control.tick()
-        self.assertEqual(self.control.action_index, 2)
-        self.control.cancel_action(pb.LeaseRequest(token=lease.token))
-        count = len(self.control.driver.state["events"])
-        self.now += 0.1
-        self.control.tick()
-        self.assertEqual(len(self.control.driver.state["events"]), count)
-        with self.assertRaises(ValueError):
-            self.control.set_targets(pb.TargetRequest(token=lease.token, targets=pb.Targets(
-                neck=pb.NeckTarget(yaw_rad=0.1), left_arm=pb.ArmTarget(joint_rad=[10]*4))))
-        self.assertEqual(len(self.control.driver.state["events"]), count)
+    def test_audio_bounded_buffer_arbitrary_fragments_and_tail(self):
+        self.enable_audio()
+        data = bytes(range(256)) * 100  # 400 ms，显著超过队列上限。
+        def packets():
+            yield pb.AudioPacket(header=pb.AudioHeader(sample_rate_hz=32000, channels=1))
+            for i in range(0, len(data), 997):
+                yield pb.AudioPacket(pcm=data[i:i+997])
+        begin = time.monotonic()
+        result = self.stub.PlayAudio(packets(), timeout=3)
+        self.assertGreater(time.monotonic() - begin, 0.35)
+        self.assertEqual(result.phase, "completed")
+        self.assertEqual(result.received_frames, len(data)//2)
+        self.assertEqual(result.submitted_frames, len(data)//2)
+        self.assertLessEqual(result.peak_buffered_ms, 160.01)
+        self.assertLess(result.start_latency_ms, 200)
+        self.assertEqual(result.buffered_ms, 0)
+        # EOS 必须立即播放短尾部，不能等待永远达不到的预缓冲阈值。
+        result = self.stub.PlayAudio(iter([
+            pb.AudioPacket(header=pb.AudioHeader(sample_rate_hz=32000, channels=1)),
+            pb.AudioPacket(pcm=bytes(640)),
+        ]), timeout=1)
+        self.assertEqual(result.submitted_frames, 320)
+        self.assertEqual(result.phase, "completed")
 
-    def test_config_apply_failure_is_persisted_and_revokes_lease(self):
-        self.lease()
-        class Failing(Simulated):
-            def connect(self):
-                raise IOError("设备不存在")
-        self.control.driver_factory = Failing
-        snapshot = self.control.get_config()
-        updated = self.control.update_config(pb.ConfigUpdate(expected_revision=1,
-                                                               config=snapshot.config))
-        self.assertEqual(updated.revision, 2)
-        self.assertEqual(self.store.config()[0], 2)
-        self.assertEqual(self.control.applied_revision, 0)
-        self.assertIsNone(self.control.lease)
-        with self.assertRaises(ControlError):
-            self.lease()
+    def test_audio_rebuffer_gap_and_motor_control_independence(self):
+        self.enable_audio()
+        def packets():
+            yield pb.AudioPacket(header=pb.AudioHeader(sample_rate_hz=32000, channels=1))
+            yield pb.AudioPacket(pcm=bytes(6400))
+            time.sleep(0.25)
+            yield pb.AudioPacket(pcm=bytes(12800))
+        future = self.stub.PlayAudio.future(packets(), timeout=3)
+        self.wait_audio(lambda s: s.phase in ("playing", "rebuffering"))
+        lease = self.stub.AcquireControl(pb.AcquireRequest(owner="remote", ttl_ms=200), timeout=1)
+        self.stub.SetTargets(pb.TargetRequest(token=lease.token,
+            targets=pb.Targets(neck=pb.NeckTarget(yaw_rad=0.1))), timeout=1)
+        # 运动租约到期不会截断独立的语音流。
+        result = future.result(timeout=3)
+        self.assertGreaterEqual(result.rebuffer_count, 1)
+        self.assertGreater(result.silence_frames, 0)
+        self.assertEqual(result.submitted_frames, 9600)
+        self.assertFalse(self.backend.state().owner)
 
-    def test_action_completion_and_late_schedule_stop(self):
-        self.lease(ttl=3000)
-        self.control.action = pb.Action(name="late", duration_ms=1000, steps=[
-            pb.ActionStep(at_ms=0, targets=pb.Targets(neck=pb.NeckTarget(yaw_rad=0)))])
-        self.control.action_start = self.now
-        self.now += 0.3
-        self.control.tick()
-        self.assertTrue(self.control.fault)
-        self.assertTrue(self.control.stopped)
-        self.assertIsNone(self.control.lease)
-
-
-class EyeService(eg.EyeControlServicer):
-    def __init__(self):
-        self.state = ep.State()
-
-    def Configure(self, request, context):
-        self.state.config.CopyFrom(request)
-        self.state.revision += 1
-        return ep.Ack(revision=self.state.revision)
-
-    def SetPose(self, request, context):
-        self.state.rendered_pose.CopyFrom(request)
-        self.state.config.mode = ep.EXTERNAL
-        self.state.revision += 1
-        return ep.Ack(revision=self.state.revision)
-
-    def GetState(self, request, context):
-        return self.state
-
-
-class RpcTests(unittest.TestCase):
-    def test_real_grpc_config_stream_stop_and_actions(self):
-        store = Store(":memory:")
-        controller = Controller(store, simulated=True)
-        controller.start()
-        server = grpc.server(futures.ThreadPoolExecutor(max_workers=6))
-        pg.add_RobotControlServicer_to_server(Service(controller), server)
-        port = server.add_insecure_port("127.0.0.1:0")
-        server.start()
+    def test_audio_stop_cancel_and_single_stream(self):
+        self.enable_audio()
+        release = threading.Event()
+        def packets():
+            yield pb.AudioPacket(header=pb.AudioHeader(sample_rate_hz=32000, channels=1))
+            yield pb.AudioPacket(pcm=bytes(9600))
+            release.wait(2)
+            yield pb.AudioPacket(pcm=bytes(640))
+        future = self.stub.PlayAudio.future(packets(), timeout=3)
         try:
-            with grpc.insecure_channel(f"127.0.0.1:{port}",
-                                       options=[("grpc.enable_http_proxy", 0)]) as channel:
-                grpc.channel_ready_future(channel).result(timeout=3)
-                stub = pg.RobotControlStub(channel)
-                cfg = stub.GetConfig(pb.Empty(), timeout=3)
-                cfg.config["metadata"]["name"] = "grpc-test"
-                result = stub.UpdateConfig(pb.ConfigUpdate(expected_revision=cfg.revision,
-                                                            config=cfg.config), timeout=3)
-                self.assertEqual(result.revision, 2)
-                with self.assertRaises(grpc.RpcError) as conflict:
-                    stub.UpdateConfig(pb.ConfigUpdate(expected_revision=1, config=cfg.config), timeout=3)
-                self.assertEqual(conflict.exception.code(), grpc.StatusCode.ABORTED)
-                lease = stub.AcquireControl(pb.AcquireRequest(owner="grpc", ttl_ms=1000), timeout=3)
-                stream = [pb.TargetRequest(token=lease.token,
-                           targets=pb.Targets(neck=pb.NeckTarget(yaw_rad=v))) for v in (0, 0.1)]
-                stub.StreamTargets(iter(stream), timeout=3)
-                watch = stub.WatchState(pb.WatchRequest(interval_ms=50), timeout=3)
-                self.assertEqual(next(watch).owner, "grpc")
-                watch.cancel()
-                action = ParseDict(json.loads(Path("robotd/examples/greeting.json").read_text()), pb.Action())
-                stub.PutAction(pb.ActionUpdate(action=action), timeout=3)
-                self.assertEqual(len(stub.ListActions(pb.Empty(), timeout=3).actions), 1)
-                stub.RunAction(pb.RunRequest(token=lease.token, name="greeting"), timeout=3)
-                stub.CancelAction(pb.LeaseRequest(token=lease.token), timeout=3)
-                stub.DeleteAction(pb.ActionDelete(name="greeting", expected_revision=1), timeout=3)
-                deleted = stub.ListActions(pb.Empty(), timeout=3).actions[0]
-                self.assertTrue(deleted.deleted)
-                self.assertEqual(deleted.revision, 2)
-                stub.PutAction(pb.ActionUpdate(action=action, expected_revision=2), timeout=3)
-                stub.Stop(pb.StopRequest(latch=True), timeout=3)
-                state = stub.GetState(pb.Empty(), timeout=3)
-                self.assertTrue(state.latched and state.stopped)
-                self.assertFalse(state.owner)
-                self.assertTrue(state.simulated)
+            self.wait_audio(lambda s: s.phase in ("playing", "rebuffering"))
+            with self.assertRaises(grpc.RpcError) as busy:
+                self.stub.PlayAudio(iter([pb.AudioPacket(header=pb.AudioHeader(
+                    sample_rate_hz=32000, channels=1))]), timeout=1)
+            self.assertEqual(busy.exception.code(), grpc.StatusCode.RESOURCE_EXHAUSTED)
+            start = time.monotonic()
+            self.stub.StopAudio(pb.Empty(), timeout=1)
+            self.wait_audio(lambda s: s.phase == "cancelled")
+            self.assertLess(time.monotonic() - start, 0.2)
+            with self.assertRaises(grpc.RpcError) as stopped:
+                future.result(timeout=1)
+            self.assertEqual(stopped.exception.code(), grpc.StatusCode.CANCELLED)
+            release.set()
+            future = self.stub.PlayAudio.future(packets(), timeout=3)
+            self.wait_audio(lambda s: s.phase in ("playing", "rebuffering"))
+            future.cancel()
+            self.wait_audio(lambda s: s.phase == "cancelled")
         finally:
-            server.stop(0).wait(3)
-            controller.close()
+            release.set()
+            future.cancel()
 
-    def test_actual_eye_rpc_config_pose_and_authority(self):
-        eye = EyeService()
-        server = grpc.server(futures.ThreadPoolExecutor(max_workers=2))
-        eg.add_EyeControlServicer_to_server(eye, server)
-        port = server.add_insecure_port("127.0.0.1:0")
-        server.start()
-        cfg = default_config()
-        for device in ("chassis", "neck", "left_arm", "right_arm"):
-            cfg[device]["enabled"] = False
-        cfg["eyes"]["target"] = f"127.0.0.1:{port}"
-        driver = Hardware(cfg)
+    def test_audio_validation_and_global_stop(self):
+        with self.assertRaises(grpc.RpcError) as disabled:
+            self.stub.PlayAudio(iter([pb.AudioPacket(header=pb.AudioHeader(
+                sample_rate_hz=32000, channels=1))]), timeout=1)
+        self.assertEqual(disabled.exception.code(), grpc.StatusCode.FAILED_PRECONDITION)
+        self.enable_audio()
+        for messages in ([pb.AudioPacket(pcm=b"\0\0")],
+                         [pb.AudioPacket(header=pb.AudioHeader(sample_rate_hz=32000, channels=1)),
+                          pb.AudioPacket(pcm=b"\0")]):
+            with self.assertRaises(grpc.RpcError) as bad:
+                self.stub.PlayAudio(iter(messages), timeout=1)
+            self.assertEqual(bad.exception.code(), grpc.StatusCode.INVALID_ARGUMENT)
+        self.wait_audio(lambda s: s.phase in ("idle", "cancelled"))
+        self.stub.Stop(pb.StopRequest(latch=True), timeout=1)
+        with self.assertRaises(grpc.RpcError) as locked:
+            self.stub.PlayAudio(iter([pb.AudioPacket(header=pb.AudioHeader(
+                sample_rate_hz=32000, channels=1))]), timeout=1)
+        self.assertEqual(locked.exception.code(), grpc.StatusCode.FAILED_PRECONDITION)
+
+    def test_gpt_sovits_raw_http_forwarding(self):
+        self.enable_audio()
+        requests = []
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                requests.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+                self.send_response(200)
+                self.send_header("Content-Type", "audio/raw")
+                self.end_headers()
+                for _ in range(4):
+                    self.wfile.write(bytes(1600))
+                    self.wfile.flush()
+                    time.sleep(0.015)
+
+            def log_message(self, *args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
         try:
-            driver.connect()
-            targets = pb.Targets(eyes=ep.Pose(left=ep.Eye(openness=1, gaze_x=0.1),
-                                             right=ep.Eye(openness=1)))
-            driver.apply(targets)
-            self.assertEqual(eye.state.config.mode, ep.EXTERNAL)
-            eye.state.config.show_controls = True
-            driver.poll(time.monotonic() + 1)
-            self.assertFalse(eye.state.config.show_controls)
-            self.assertAlmostEqual(eye.state.rendered_pose.left.gaze_x, 0.1)
+            packets = tts_packets(f"http://127.0.0.1:{server.server_port}/tts", {"text": "你好"}, 32000)
+            result = self.stub.PlayAudio(packets, timeout=2)
+            self.assertEqual(result.submitted_frames, 3200)
+            self.assertEqual(requests[0]["media_type"], "raw")
+            self.assertTrue(requests[0]["streaming_mode"])
         finally:
-            driver.close()
-            server.stop(0).wait(3)
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+
+class MigrationTests(unittest.TestCase):
+    def test_existing_database_and_auth(self):
+        def seed(path):
+            cfg = default_config()
+            cfg.pop("audio")
+            cfg["schema_version"] = 1
+            with sqlite3.connect(path) as db:
+                db.execute("CREATE TABLE config(id INTEGER PRIMARY KEY,revision INTEGER,body TEXT)")
+                db.execute("INSERT INTO config VALUES(1,7,?)", (json.dumps(cfg),))
+        backend = RustDaemon(token="test-secret", seed=seed)
+        try:
+            with self.assertRaises(grpc.RpcError) as denied:
+                backend.stub.GetConfig(pb.Empty(), timeout=1)
+            self.assertEqual(denied.exception.code(), grpc.StatusCode.UNAUTHENTICATED)
+            cfg = backend.stub.GetConfig(pb.Empty(), timeout=1,
+                metadata=(("authorization", "Bearer test-secret"),))
+            self.assertEqual(cfg.revision, 8)
+            self.assertEqual(cfg.config["schema_version"], 2)
+            self.assertFalse(cfg.config["audio"]["enabled"])
+        finally:
+            backend.close()
 
 
 if __name__ == "__main__":

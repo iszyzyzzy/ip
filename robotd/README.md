@@ -1,6 +1,6 @@
 # robotd
 
-robotd 是上层动作程序、调试工具和遥控程序访问底层设备的统一入口。Python 3.11+，部署在树莓派；Windows 可运行模拟服务和客户端。
+robotd 是上层动作程序、调试工具和遥控程序访问底层设备的统一入口，服务端已整体改为 Rust。树莓派运行单个原生二进制，不依赖 Python；Windows 可运行模拟服务。Python 包保留客户端、音频转发工具与独立网页网关。
 
 网页遥控通过独立进程 [robot-remote](../robot_remote/README.md) 接入；它提供 HTTP API 和 WebSocket，不随 robotd 自动启动。
 
@@ -13,7 +13,8 @@ robotd 是上层动作程序、调试工具和遥控程序访问底层设备的�
        │                 CAN2/CAN3：RANGER AIR
        ├── UART2 + RTS → 左臂 4 个总线舵机
        ├── UART3 + RTS → 右臂 4 个总线舵机
-       └── 本地 AF_UNIX gRPC → eyes 渲染进程
+       ├── 本地 AF_UNIX gRPC → eyes 渲染进程
+       └── 有界 PCM 队列 → ALSA → I²S → TAS5756M
 ```
 
 ## 安装与运行
@@ -21,15 +22,15 @@ robotd 是上层动作程序、调试工具和遥控程序访问底层设备的�
 在仓库根目录：
 
 ```sh
-python -m venv .venv
-# Linux
-. .venv/bin/activate
-# Windows PowerShell
-# .\.venv\Scripts\Activate.ps1
-python -m pip install -e .
+# 树莓派编译需安装系统开发库（SQLite 随二进制编译）。
+# sudo apt install build-essential pkg-config libasound2-dev
+cargo build --release --manifest-path robotd-rs/Cargo.toml
+./robotd-rs/target/release/robotd --simulate --db robotd.sqlite
+# Windows 对应 robotd-rs\target\release\robotd.exe
 
-# 不需要设备即可开发上层控制。
-robotd --simulate --db robotd.sqlite
+# 开发机上的 Python 工具统一由 uv 管理。
+uv sync --extra remote --extra dev
+uv run robotctl state
 ```
 
 另开终端：
@@ -44,7 +45,7 @@ robotctl stop --latch
 robotctl --clear-latch send robotd/examples/neck-eyes.json
 ```
 
-未安装时也可用 `python -m robotd.server` / `python -m robotd.client`。退出客户端会释放控制权并停止；`send` 持续续期底盘目标，手臂与颈部位置只发送一次。JSON 浮点数为关节弧度，底盘为 m/s、rad/s 和 rad。
+安装客户端后可直接运行 `robotctl`，或统一使用 `uv run robotctl`。旧的 `python -m robotd.server` 已移除。退出控制客户端会释放控制权并停止运动；`send` 持续续期底盘目标，手臂与颈部位置只发送一次。JSON 浮点数为关节弧度，底盘为 m/s、rad/s 和 rad。
 
 首次接设备前生成并编辑配置，再导入新数据库：
 
@@ -60,7 +61,7 @@ robotd --db robotd.sqlite --init robotd/generated-config.json
 
 ## 配置与权威性
 
-SQLite 是唯一持久配置源。配置整体读取、校验和替换，所有字段有 `schema_version`；拼错字段、非法数值、重复总线地址和超出换算范围的限位会被拒绝。`metadata` 是上层共享的信息对象，可存机器人名称、尺寸、坐标标定、能力说明等 JSON 数据。
+SQLite 是唯一持久配置源。Rust 版本保持原有表结构、配置内容、动作版本和 RPC 字段兼容。启动时将 v1 配置补入默认关闭的 audio 区段，升级为 `schema_version=2` 并递增配置 revision，原有设备参数不变。配置整体读取、校验和替换；拼错字段、非法数值、重复总线地址和超出换算范围的限位会被拒绝。`metadata` 是上层共享的信息对象，可存机器人名称、尺寸、坐标标定、能力说明等 JSON 数据。
 
 ```sh
 robotctl config > current-config.json
@@ -80,7 +81,7 @@ H7 每次连接按数据库参数设置两套位置环；眼屏每次连接应�
 
 ### H7 与颈部
 
-复用 [Bridge](../h7/tools/dm_can.py) 与 [电机接口](../h7/docs/motors.md)，固件要求 v1.1.0+。当前固件绑定 CAN1/1 Mbps：GM6020 ID1，DM4310 ID0x01/master0x11。H7 保持 1 ms 实时位置闭环，robotd 发位置目标、停止、调参和读状态。
+Rust 实现直接使用现有 [CDC 协议](../h7/docs/protocol.md) 与 [电机接口](../h7/docs/motors.md)，固件要求 v1.1.0+；实现位于 [h7.rs](../robotd-rs/src/h7.rs)。当前固件绑定 CAN1/1 Mbps：GM6020 ID1，DM4310 ID0x01/master0x11。H7 保持 1 ms 实时位置闭环，robotd 发位置目标、停止、调参和读状态。
 
 数据库 `neck.yaw/pitch` 包含 `min_rad`、`max_rad`、`direction`、`offset_rad` 及完整 `tuning`。换算为 `H7目标 = direction × 关节角 + offset_rad`；状态额外返回 `joint_position_rad`。默认结构限位 ±0.5 rad，仅作为初始调试配置，需按实际机构修改。
 
@@ -113,7 +114,7 @@ robotctl zero-neck --mask 3
 
 默认 `/dev/ttyAMA2`、`/dev/ttyAMA3`、115200 baud、8N1，每路 ID 0/1/2/3。树莓派 UART 实例名称可能随型号和设备树变化，按实际设备路径修改 `port`，并开启相应 UART 与 RTS 引脚，关闭 RTS/CTS 自动流控。
 
-`rts_tx` 是 pyserial 的 RTS **断言值**（true/false），它与实际引脚高低的对应关系由驱动决定，按现有转接电路配置。发送时切到该值，等待 `flush/tcdrain` 完成，再在 `finally` 中设为相反值释放总线；失败也释放。`direction_mode=manual` 使用这一流程；若 UART 驱动支持 `TIOCSRS485`，可改为 `kernel`，由驱动控制 RTS，设置失败明确报错。
+`rts_tx` 保持原有 RTS **断言值**（true/false）语义，它与实际引脚高低的对应关系由驱动决定，按现有转接电路配置。发送时切到该值，等待 `flush/tcdrain` 完成，再设为相反值释放总线；失败也释放。`direction_mode=manual` 使用这一流程；若 UART 驱动支持 `TIOCSRS485`，可改为 `kernel`，由驱动控制 RTS，设置失败明确报错。
 
 每个关节以 `center_pwm`、`pwm_per_rad`、`direction` 转换到舵机 500..2500 位置；270° 舵机默认 `pwm_per_rad=2000/(270°)`。关节限位必须与实际机构一致。两个串口上的 ID 可以相同，同一串口内不能重复。直连使用逐地址 `#idP位置T时间!`，不依赖专用控制器的批处理命令。
 
@@ -140,28 +141,36 @@ robotctl zero-neck --mask 3
 | Stop / ZeroNeck | 全部停止、停止锁定及颈部运行时归零 |
 | ListActions / PutAction / DeleteAction | 版本化动作存储 |
 | RunAction / CancelAction | 时间点动作执行与取消 |
+| PlayAudio / GetAudioState / StopAudio | PCM16 音频流、缓冲/播放状态和停止 |
 
 取得控制权后带返回的 token 下发目标，租约 200..5000 ms，必须显式续期。控制权到期/释放会停止底盘、颈部和双臂并取消动作。`Stop` 不需要租约，可抢占排队请求；它撤销旧 token。`latch=true` 后，新的 Acquire 必须显式 `clear_latch=true`。停止状态表示中枢已清除运动目标并请求设备停止，实际执行结果查看故障与设备反馈。
 
 底盘目标另有 100..1000 ms 的 `ttl_ms`；租约心跳不能延长旧速度目标。到期会单独停止底盘并驻车。颈部、机械臂位置保持至新目标或租约到期。所有目标先整体验证，再访问设备；设备 I/O 失败会停止整机、关闭连接并进入故障状态。ACK/revision 表示目标已接受，不表示到位。
 
-控制线程串行拥有 H7、两个 UART 与数据库。普通请求队列最多 64 条，满时拒绝；状态/控制长连接最多 8 条，保留 unary RPC 工作线程。停止/取消请求具有队列优先级。请求超时不会自动重发，客户端应查询状态。
+控制线程串行拥有 H7、两个 UART 与数据库，普通请求队列最多 64 条。停止/取消请求使用独立优先队列。tonic 异步处理 RPC，音频线程独立拥有 ALSA 与小型 PCM 队列，不经过运动指令队列。请求超时不会自动重发，客户端应查询状态。
+
+## I²S 喇叭与流式语音
+
+TAS5756M 已预配置，robotd 直接打开系统 ALSA 声卡，不操作驱动、I²C 或设备树。默认预缓冲 100 ms、断流恢复缓冲 80 ms、软件队列上限 160 ms、ALSA 目标缓冲 40 ms。音频不占运动租约；单独释放/过期运动控制权不会截断语音，全局 `Stop`、配置更新和退出会取消音频。
+
+接线、启用方法、PCM 协议和 GPT-SoVITS 示例见 [音频播放](docs/audio.md)。
 
 ## 动作开发
 
 动作是 `name + duration_ms + steps`；每个 `step.at_ms` 指定发送目标的相对时间。时间点严格递增，最长 10 分钟/1000 点。H7 负责颈部闭环，舵机自行执行 `duration_ms` 轨迹，robotd 不额外实现 IK。可用上层规划器生成关节时间点。
 
-动作保存和更新检查自身 revision；新动作 expected_revision=0，更新使用 ListActions 返回值。删除也保留版本号，ListActions 中标为 `deleted=true`，重建同名动作使用该版本，避免旧客户端覆盖新动作。运行中拒绝修改/删除同名动作和直接 SetTargets，需先取消。开始动作会停止已有目标；正常完成、取消、失去租约都停止整机。调度时间点迟到超过 250 ms 会中止，避免跳过时间点后突然执行旧动作。
+动作保存和更新检查自身 revision；新动作 expected_revision=0，更新使用 ListActions 返回值。删除也保留版本号，ListActions 中标为 `deleted=true`，重建同名动作使用该版本，避免旧客户端覆盖新动作。运行中拒绝修改/删除同名动作和直接 SetTargets，需先取消。开始动作会停止已有运动目标；正常完成、取消、失去租约都停止运动设备，独立语音流继续。调度时间点迟到超过 250 ms 会中止，避免跳过时间点后突然执行旧动作。
 
 底盘动作仍受每段目标 TTL 限制，长时间运动需增加时间点，或使用持续目标流。上层参考 [remote.py](examples/remote.py) 和客户端 `Session`，它负责控制权续期与退出释放。
 
 ## 部署和检查
 
-`deploy/robotd.service` 给出 systemd 示例，项目装到 `/opt/robot` 的虚拟环境，`robot` 用户加入串口权限组。先用实际配置创建 `/var/lib/robotd/robotd.sqlite` 并调整权限，再启用服务；眼屏服务需在 robotd 前启动。自动重启不会恢复旧动作或速度目标。
+`deploy/robotd.service` 给出 systemd 示例，二进制安装到 `/opt/robot/bin/robotd`，`robot` 用户加入 `dialout` 与 `audio` 权限组。先用实际配置创建 `/var/lib/robotd/robotd.sqlite` 并调整权限，再启用服务；眼屏服务需在 robotd 前启动。自动重启不会恢复旧动作、速度或音频流。
 
 ```sh
-python -m unittest discover -s robotd/tests -v
-python -m build --wheel --no-isolation
+just build
+just test
+just check
 ```
 
-检查覆盖文档中的 CAN 向量、真实 H7 Bridge CDC 拆包、模式反馈门控、RTS drain/释放/回显、SQLite 重开/版本冲突/实例锁、整条目标校验、租约/速度 TTL、动作取消/延迟停止，以及实际本机 gRPC 配置/指令流/眼屏 RPC 往返。设备由测试传输模拟；实机接线、RTS 极性、机构标定和负载闭环需在树莓派上确认。
+检查包括 Rust CDC 编解码/CRC 与底盘向量、配置限制与动作版本，以及实际 Rust 服务端和 Python 客户端之间的配置迁移、动作、租约、音频背压/断流/停止。网页网关的 HTTP/WebSocket 检查使用同一个 Rust 二进制。测试范围、ARM64 构建与内存采样见 [验证记录](docs/validation.md)，实际播放延迟在树莓派声卡上测量。

@@ -1,0 +1,10 @@
+{
+  "text": "你好，我已经准备好了。",
+  "text_lang": "zh",
+  "ref_audio_path": "/path/on/gpt-sovits-server/reference.wav",
+  "prompt_lang": "zh",
+  "prompt_text": "参考音频对应的文字",
+  "text_split_method": "cut5",
+  "streaming_mode": true,
+  "media_type": "raw"
+}

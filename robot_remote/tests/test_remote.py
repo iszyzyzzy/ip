@@ -1,29 +1,19 @@
 """通过实际本机 HTTP、WebSocket 和 gRPC 验证网页接入语义。"""
 import asyncio
-from concurrent import futures
 import io
 import unittest
 
 from aiohttp import ClientTimeout, WSMsgType
 from aiohttp.test_utils import TestClient, TestServer
-import grpc
 
-from robotd.control import Controller
-from robotd.pb import robot_pb2_grpc as pg
-from robotd.server import Service
-from robotd.store import Store
 from robot_remote.server import GATEWAY, create_app
+from robotd.tests.support import RustDaemon
 
 
 class RemoteTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.controller = Controller(Store(":memory:"), simulated=True)
-        self.controller.start()
-        self.server = grpc.server(futures.ThreadPoolExecutor(max_workers=8))
-        pg.add_RobotControlServicer_to_server(Service(self.controller, "upstream-secret"),
-                                            self.server)
-        self.port = self.server.add_insecure_port("127.0.0.1:0")
-        self.server.start()
+        self.backend = await asyncio.to_thread(RustDaemon, token="upstream-secret")
+        self.port = self.backend.port
         app = create_app(f"127.0.0.1:{self.port}", robotd_token="upstream-secret",
                          api_token="web-secret", allowed_origins=["http://localhost:5173"],
                          state_interval_ms=50, rpc_timeout=0.5)
@@ -33,8 +23,7 @@ class RemoteTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         await self.client.close()
-        await asyncio.to_thread(self.server.stop(0).wait, 2)
-        await asyncio.to_thread(self.controller.close)
+        await asyncio.to_thread(self.backend.close)
 
     async def api(self, method, path, params=None, status=200, headers=None):
         async with self.client.request(method, path, json=params,
@@ -136,8 +125,10 @@ class RemoteTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0.13)
         await self.api("POST", "/api/control/renew", {"session_id": session_id})
         # 浏览器仍续期控制权，但不能因此延长之前的底盘速度。
-        self.assertIsNone(self.controller.chassis_target)
-        self.assertIsNotNone(self.controller.lease)
+        state = await self.api("GET", "/api/state")
+        events = state["result"]["devices"]["events"]
+        self.assertIn("stop_chassis", [event["operation"] for event in events])
+        self.assertTrue(state["result"]["owner"])
         await self.state_until(lambda state: not state["owner"] and state["stopped"])
         await self.api("POST", "/api/control/renew", {"session_id": session_id}, status=403)
         ws = await self.websocket()
@@ -197,15 +188,16 @@ class RemoteTests(unittest.IsolatedAsyncioTestCase):
         await self.api("POST", "/api/targets", {"session_id": session_id,
                        "targets": {"neck": {"yaw_rad": 0.1}}})
         await self.client.close()
-        self.assertIsNone(self.controller.lease)
-        self.assertTrue(self.controller.stopped)
+        state = await asyncio.to_thread(self.backend.state)
+        self.assertFalse(state.owner)
+        self.assertTrue(state.stopped)
 
     async def test_robotd_failure_reports_error_without_replay(self):
         ws = await self.websocket()
         lease = await self.ws_command(ws, 2, "acquire")
         self.assertIn("result", lease)
         await self.ws_command(ws, 3, "targets", {"targets": {"neck": {"yaw_rad": 0.1}}})
-        await asyncio.to_thread(self.server.stop(0).wait, 2)
+        await asyncio.to_thread(self.backend.stop)
         error = await self.ws_receive(ws, lambda message: message["type"] == "backend_error")
         self.assertIn(error["error"]["code"], ("UNAVAILABLE", "DEADLINE_EXCEEDED"))
         for path in ("/api/state", "/healthz"):
@@ -213,14 +205,7 @@ class RemoteTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn(reply.status, (503, 504))
                 self.assertIn((await reply.json())["error"]["code"],
                               ("UNAVAILABLE", "DEADLINE_EXCEEDED"))
-        await asyncio.to_thread(self.controller.close)
-        self.controller = Controller(Store(":memory:"), simulated=True)
-        self.controller.start()
-        self.server = grpc.server(futures.ThreadPoolExecutor(max_workers=8))
-        pg.add_RobotControlServicer_to_server(Service(self.controller, "upstream-secret"),
-                                            self.server)
-        self.assertEqual(self.server.add_insecure_port(f"127.0.0.1:{self.port}"), self.port)
-        self.server.start()
+        await asyncio.to_thread(self.backend.start)
         recovered = await self.ws_receive(ws, lambda message: message["type"] == "state")
         self.assertTrue(recovered["state"]["stopped"])
         self.assertFalse(recovered["state"]["owner"])

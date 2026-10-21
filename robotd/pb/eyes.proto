@@ -110,4 +110,7 @@ message State {
   repeated float jelly_left = 7; // GPU deformation: offset x/y, squash, shear
   repeated float jelly_right = 8;
   string tracking_status = 9;
+  string output_mode = 10; // window / drm（含 --headless）/ offscreen / control_only
+  string left_output = 11;
+  string right_output = 12;
 }
