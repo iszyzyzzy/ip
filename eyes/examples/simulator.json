@@ -1,0 +1,23 @@
+{
+  "mode": 4,
+  "simulator": {
+    "target_x": 0.65,
+    "target_y": -0.35,
+    "eye_motion": true,
+    "motion_amplitude": 0.06,
+    "motion_speed": 1.5,
+    "convergence": 0.0,
+    "left_openness": 1.0,
+    "right_openness": 1.0,
+    "left_brow": 0.0,
+    "right_brow": 0.0,
+    "roll": 0.0,
+    "show_target": true
+  },
+  "jelly": { "enabled": true, "strength": 0.7, "frequency": 3.5, "damping": 0.3 },
+  "layers": { "iris": true, "pupil": true, "highlights": true, "sclera": true, "upper_lid": true, "lower_lid": true, "brow": true },
+  "auto_blink": true,
+  "blink_interval": 3.5,
+  "blink_duration": 0.24,
+  "blink_variation": 0.3
+}

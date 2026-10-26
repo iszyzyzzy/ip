@@ -1,0 +1,2 @@
+# Linux 启动脚本需要 LF，避免 Windows 检出后 shell 误读参数。
+*.sh text eol=lf

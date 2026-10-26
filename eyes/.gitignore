@@ -1,0 +1,7 @@
+/target/
+/dist/
+/eyes-settings.json
+/captures/
+*.log
+*.sock
+*.ppm

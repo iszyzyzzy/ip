@@ -11,3 +11,11 @@ build/
 dist/
 robotd/generated-config.json
 robotd-rs/target/
+.ruff_cache/
+.env
+.env.*
+!.env.example
+*.pcap
+*.pcapng
+# 名片包含个人联系方式，不随公开源码发布。
+/screen/公司名片业务商务对接.jpg

@@ -1,0 +1,103 @@
+{
+  "half_width": 0.255,
+  "upper_height": 0.205,
+  "lower_height": 0.205,
+  "roundness": 0.85,
+  "iris_aspect": 0.9,
+  "brow_height": 0.3,
+  "lid_texture_height": 0.16,
+  "shadow_strength": 0.12,
+  "defaults": {
+    "iris_size": 0.2,
+    "pupil": 0.4,
+    "tilt": 0.0,
+    "glow": 0.0,
+    "iris": [
+      1.0,
+      1.0,
+      1.0
+    ],
+    "background": [
+      0.98,
+      0.94,
+      0.93
+    ]
+  },
+  "textures": [
+    "layers/iris.png",
+    "layers/pupil.png",
+    "layers/highlights.png",
+    "layers/sclera.png",
+    "layers/upper_lid.png",
+    "layers/lower_lid.png",
+    "layers/brow.png"
+  ],
+  "placement": {
+    "iris": {
+      "offset": [
+        0.0,
+        0.0
+      ],
+      "scale": 1.0,
+      "gaze": 1.0
+    },
+    "pupil": {
+      "offset": [
+        0.0,
+        0.0
+      ],
+      "scale": 1.0,
+      "gaze": 1.0
+    },
+    "highlights": {
+      "offset": [
+        0.0,
+        0.0
+      ],
+      "scale": 1.0,
+      "gaze": 1.0
+    },
+    "sclera": {
+      "offset": [
+        0.0,
+        0.0
+      ],
+      "scale": 1.0,
+      "gaze": 0.0
+    },
+    "upper_lid": {
+      "offset": [
+        0.0,
+        0.0
+      ],
+      "scale": 1.0,
+      "gaze": 0.0
+    },
+    "lower_lid": {
+      "offset": [
+        0.0,
+        0.0
+      ],
+      "scale": 1.0,
+      "gaze": 0.0
+    },
+    "brow": {
+      "offset": [
+        0.0,
+        0.0
+      ],
+      "scale": 1.0,
+      "gaze": 0.0
+    }
+  },
+  "motion": {
+    "canvas": 0.38,
+    "gaze_range": [
+      0.075,
+      0.055
+    ],
+    "blink_pivot": 0.05,
+    "upper_lid_y": -0.113,
+    "lower_lid_y": 0.174
+  }
+}

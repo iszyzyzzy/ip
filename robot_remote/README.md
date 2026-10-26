@@ -32,7 +32,7 @@ robotd 不需要安装 `[remote]`、启动网关或开放 HTTP 端口。两者�
 robot-remote --web-root /opt/robot/web-remote --host 0.0.0.0
 ```
 
-目录需包含 `index.html`；访问 `/` 即可打开，静态资源和 API 同源。开发时前端也可单独运行：
+仓库内的网页遥控器见 [web_remote_control](../web_remote_control/README.md)，`npm run build` 后使用 `--web-root web_remote_control/dist`。目录需包含 `index.html`；访问 `/` 即可打开，静态资源和 API 同源。开发时前端也可单独运行：
 
 ```sh
 robot-remote --allow-origin http://localhost:5173

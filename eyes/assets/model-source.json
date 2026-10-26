@@ -1,0 +1,98 @@
+{
+  "model": "大肥鱼.model3.json",
+  "atlas": "大肥鱼.8192/texture_00.png",
+  "atlas_sha256": "1d9029ad855cb60fc25c2d7e5d19a7051d32ef782de25ee4318864ae85bc287d",
+  "drawables": [
+    {
+      "drawable": "ArtMesh10",
+      "index": 0,
+      "atlas_box": [
+        5412,
+        3532,
+        5591,
+        3596
+      ]
+    },
+    {
+      "drawable": "ArtMesh172",
+      "index": 10,
+      "atlas_box": [
+        1868,
+        1679,
+        1880,
+        1691
+      ]
+    },
+    {
+      "drawable": "ArtMesh173",
+      "index": 11,
+      "atlas_box": [
+        1868,
+        1764,
+        1899,
+        1800
+      ]
+    },
+    {
+      "drawable": "ArtMesh174",
+      "index": 12,
+      "atlas_box": [
+        1868,
+        2900,
+        1905,
+        2952
+      ]
+    },
+    {
+      "drawable": "ArtMesh175",
+      "index": 13,
+      "atlas_box": [
+        5428,
+        1028,
+        5548,
+        1165
+      ]
+    },
+    {
+      "drawable": "ArtMesh168",
+      "index": 15,
+      "atlas_box": [
+        5324,
+        5316,
+        5533,
+        5412
+      ]
+    },
+    {
+      "drawable": "ArtMesh171",
+      "index": 18,
+      "atlas_box": [
+        2516,
+        5828,
+        2636,
+        5859
+      ]
+    },
+    {
+      "drawable": "ArtMesh176",
+      "index": 19,
+      "atlas_box": [
+        5428,
+        828,
+        5599,
+        954
+      ]
+    },
+    {
+      "drawable": "ArtMesh255",
+      "index": 86,
+      "atlas_box": [
+        1868,
+        1652,
+        1898,
+        1671
+      ]
+    }
+  ],
+  "adaptation": "虹膜/瞳孔/高光按默认模型网格对齐；眼线展平为条带；眼白保留源渐变并由 Q 版眼形裁切；左右眼源网格共用图集。"
+}

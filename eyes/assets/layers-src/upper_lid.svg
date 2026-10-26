@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+<defs><linearGradient id="lash" x1="0" y1="0" x2=".3" y2="1"><stop stop-color="#08070d"/><stop offset=".6" stop-color="#130910"/><stop offset="1" stop-color="#63252d"/></linearGradient></defs>
+<path d="M102 205 L116 192 L102 193 Q120 181 131 173 L124 158 Q136 168 157 159 C210 136 270 139 316 150 Q329 150 334 137 L332 153 Q366 165 387 185 Q411 203 444 204 L414 225 L394 270 L394 228 C354 196 306 178 259 176 C202 172 158 186 117 204 L100 215 L111 202 Z" fill="url(#lash)"/>
+<path d="M363 176 L365 160 L347 141 L378 167 L383 181 Z" fill="#20101b"/>
+</svg>
