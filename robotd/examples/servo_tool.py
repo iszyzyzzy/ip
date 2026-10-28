@@ -97,15 +97,27 @@ class Servo:
         delta = int(text or "20")
         if not 1 <= delta <= 50 or not 500 <= center - delta < center + delta <= 2500:
             raise ValueError("摆幅超范围，或目标超出500～2500")
-        print(f"将从当前位置 {center} 慢速走到 {center + delta}、{center - delta}，再回 {center}。")
+        print(f"将先恢复扭力，从当前位置 {center} 慢速走到 {center + delta}、{center - delta}，再回 {center}。")
         if input("确认线缆和机构有余量，输入 move 开始：").strip() != "move":
             return
         try:
+            # 脱力状态可能持续到下一条恢复指令，位置目标不应隐含承担恢复扭力。
+            reply = self.command("PULR", wait=0.15)
+            if "PERR" in reply or "PTPERROR" in reply:
+                raise RuntimeError("恢复扭力收到错误回包，已取消摆动")
+            positions = [center]
             for target in (center + delta, center - delta, center):
                 self.command(f"P{target:04}T1000", wait=0.05)
                 time.sleep(1.15)
-            actual = self.position()
-            print(f"往返命令已发送，当前位置读数 {actual}。")
+                actual = self.position()
+                positions.append(actual)
+                print(f"目标 {target}，实际读数 {actual}，差值 {actual - target:+d}。")
+            if max(positions) - min(positions) <= 2:
+                print("未观察到明显位移。请检查扭力、保护状态、软限位及工作模式；不要继续加大摆幅。")
+                self.command("PMOD")
+                self.command("PRTV")
+            else:
+                print(f"本次读数范围 {min(positions)}～{max(positions)}，最后读数 {actual}。")
         except BaseException:
             # 中断后停止继续追赶目标，不突然卸力导致臂体下落。
             self.command("PDST", wait=0.1)
