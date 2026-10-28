@@ -65,6 +65,8 @@ class Servo:
         self.command("PVER")
         self.command("PID")
         self.position()
+        self.command("PMOD")
+        self.command("PRDA")
 
     def set_id(self):
         value = int(input("新 ID（0～253）："))
@@ -115,7 +117,7 @@ class Servo:
             if max(positions) - min(positions) <= 2:
                 print("未观察到明显位移。请检查扭力、保护状态、软限位及工作模式；不要继续加大摆幅。")
                 self.command("PMOD")
-                self.command("PRTV")
+                self.command("PRDA")
             else:
                 print(f"本次读数范围 {min(positions)}～{max(positions)}，最后读数 {actual}。")
         except BaseException:
