@@ -20,3 +20,20 @@ sudo systemctl start robotd
 - 退出工具仅释放串口并将RTS恢复高电平，不主动改变扭力状态。最后一次若执行脱力，退出后仍保持脱力；需要重新保持时选菜单6。
 
 只读检查可使用 `python3 servo_tool.py --port u2 --id 1 status`。诊断错误回包（如 `PTPERROR`）会原样打印。
+
+## 双臂整体往返
+
+`servo_roundtrip.py` 与 `servo_tool.py` 放在同一目录。默认U2、U3每侧ID 1/2/3/4，共8颗；先读取全部起点，任何一颗读不到就不开始。每颗从自身起点增加200位置单位，默认每段3秒，再返回自身起点；近同时逐颗下发，不保证硬件同步。协议范围500～2500只作为数值检查，不代表机构和线缆行程。
+
+```bash
+sudo systemctl stop robotd
+# 先预览，退出所有已打开串口的单颗调试工具：
+python3 ~/robot-bringup/servo_roundtrip.py
+# 实际执行，确认8颗舵机均有相应活动空间：
+python3 ~/robot-bringup/servo_roundtrip.py --run
+# 调整示例：仅一侧、反方向200、每段5秒
+python3 ~/robot-bringup/servo_roundtrip.py --ports u2 --offset -200 --duration 5000 --run
+sudo systemctl start robotd
+```
+
+两段分别回读实际位置，任一差值超过10时报告未跟随。运行前不发送脱力、重新校准或恢复扭力命令。Ctrl+C或读取失败时尝试停止全部轨迹，保留扭力，不自动回程；不循环运动。所有运动默认使用各自读回的起点，不前往1500。
