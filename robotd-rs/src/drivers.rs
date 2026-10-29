@@ -245,8 +245,12 @@ impl Servo {
     }
     fn manual(&mut self, t: &pb::ServoTarget) -> Result<()> {
         let j = &self.cfg.joints[t.joint_index as usize];
-        // 手动指定原始位置，不重写零点；T0001由实机调试确定。
-        self.send(servo_position_command(j.id, t.position_pwm).as_bytes())
+        // 恢复保持必须由操作者明确发起，不能因通信恢复就重放旧目标。
+        if t.restore_hold {
+            self.send(format!("#{:03}PULR!", j.id).as_bytes())
+        } else {
+            self.send(servo_position_command(j.id, t.position_pwm).as_bytes())
+        }
     }
     fn stop(&mut self) -> Result<()> {
         let mut errors = Vec::new();

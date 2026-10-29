@@ -44,6 +44,12 @@ class RemoteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(event["value"]["servo"]["positionPwm"], 904)
         self.assertNotIn("leftArm", event["value"])
         await self.api("POST", "/api/targets", {"session_id": session, "targets": {
+            "servo": {"joint_index": 2, "position_pwm": 904, "restore_hold": True}}})
+        held = await self.state_until(lambda state: any(
+            e.get("value", {}).get("servo", {}).get("restoreHold")
+            for e in state["devices"]["events"] if e["operation"] == "targets"))
+        self.assertFalse(held.get("latched", False))
+        await self.api("POST", "/api/targets", {"session_id": session, "targets": {
             "servo": {"joint_index": 4, "position_pwm": 904}}}, status=400)
 
     async def acquire(self, ttl=1000):

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import GazePad from '@/components/GazePad.vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -30,6 +31,14 @@ watch(() => [props.config?.eyes?.settings, props.revision] as const, ([settings,
     baseRevision.value = revision
   }
 }, { immediate: true })
+function setGaze(x: number, y: number) {
+  if (!draft.value) return
+  draft.value.simulator.target_x = x
+  draft.value.simulator.target_y = y
+  // 定睛应固定目标，而不是沿用模拟模式里的随机眼跳。
+  draft.value.simulator.eye_motion = false
+  changed()
+}
 function changed() { dirty.value = true; saved.value = false }
 function reset() {
   if (props.config?.eyes?.settings) draft.value = clone(props.config.eyes.settings)
@@ -92,6 +101,12 @@ function blink() { remote.targets({ blink: { left: true, right: true } }, true) 
         <ToggleGroupItem value="IFACIALMOCAP" class="h-11 flex-1">面捕</ToggleGroupItem>
         <ToggleGroupItem value="SIMULATOR" class="h-11 flex-1">定睛</ToggleGroupItem>
       </ToggleGroup>
+      <div v-if="draft.mode === 'SIMULATOR'" class="space-y-3">
+        <div class="flex items-center justify-between"><Label>注视位置</Label><Button variant="ghost" size="sm" @click="setGaze(0, 0)">回中</Button></div>
+        <GazePad :x="draft.simulator.target_x" :y="draft.simulator.target_y" @change="setGaze" />
+        <p class="text-xs text-muted-foreground">点击或拖动圆点选择方向，松手保持；点击下方“应用并保存”生效。</p>
+        <div class="flex items-center justify-between"><Label for="gaze-saccades">目标附近轻微眼动</Label><Switch id="gaze-saccades" v-model="draft.simulator.eye_motion" @update:model-value="changed" /></div>
+      </div>
       <div class="space-y-2">
         <Label for="phone-ip">面捕手机 IP</Label>
         <div class="flex gap-2">

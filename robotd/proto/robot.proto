@@ -49,6 +49,7 @@ message ServoTarget {
   bool right_arm = 1;
   uint32 joint_index = 2; // 根部到末端，0..3
   uint32 position_pwm = 3; // 500..2500
+  bool restore_hold = 4; // 显式PULR保持当前有效反馈位置，不发送位置目标
 }
 message Targets {
   ChassisTarget chassis = 1;

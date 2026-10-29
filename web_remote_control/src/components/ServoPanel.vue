@@ -24,7 +24,7 @@ watch(rows, values => {
   }
 }, { immediate: true })
 
-async function move(index: number, value: number) {
+async function move(index: number, value: number, restoreHold = false) {
   if (!remote.controlling.value || sending.value || !arm.value?.enabled || !rows.value[index]?.fresh) return
   if (!Number.isInteger(value) || value < 500 || value > 2500) {
     remote.message.value = '位置需为500～2500的整数'
@@ -34,7 +34,7 @@ async function move(index: number, value: number) {
   try {
     // 只发送选中的舵机，不拿其他关节的旧反馈拼成整臂目标。
     await remote.command('targets', { targets: { servo: {
-      right_arm: side.value === 'right_arm', joint_index: index, position_pwm: value,
+      right_arm: side.value === 'right_arm', joint_index: index, position_pwm: value, restore_hold: restoreHold,
     } } })
   } catch { /* 错误由统一提示显示，运动指令不重试。 */ }
   finally { sending.value = false }
@@ -70,7 +70,9 @@ function nudge(index: number, delta: number) {
         <Button variant="outline" class="h-10" :disabled="!remote.controlling.value || !row.fresh || sending" @click="nudge(row.index, 10)">+10</Button>
         <Button class="h-10" :disabled="!remote.controlling.value || !row.fresh || sending || !arm?.enabled" @click="move(row.index, drafts[row.key]!)">移动</Button>
       </div>
+      <Button variant="ghost" class="h-9 w-full text-xs text-muted-foreground" :disabled="!remote.controlling.value || !row.fresh || sending || !arm?.enabled" @click="move(row.index, row.feedback.pwm, true)">恢复保持当前位置</Button>
     </section>
+    <p class="text-xs leading-relaxed text-muted-foreground">若故障排除后仍不保持，可点击对应关节的“恢复保持当前位置”。该操作发送 PULR，不会重发旧目标，也不能绕过温度、电压或反馈保护。</p>
     <p v-if="!remote.controlling.value" class="text-center text-xs text-muted-foreground">取得控制权后即可调节。</p>
   </div>
 </template>

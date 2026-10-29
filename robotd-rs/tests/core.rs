@@ -109,6 +109,7 @@ fn manual_servo_is_individual_and_uses_fast_position_command() {
             right_arm: false,
             joint_index: 2,
             position_pwm: 904,
+            restore_hold: false,
         }),
         ..Default::default()
     };
