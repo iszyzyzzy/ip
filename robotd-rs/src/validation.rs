@@ -11,7 +11,8 @@ pub fn targets(t: &pb::Targets, cfg: &Config) -> Result<()> {
             || t.left_arm.is_some()
             || t.right_arm.is_some()
             || t.eyes.is_some()
-            || t.blink.is_some(),
+            || t.blink.is_some()
+            || t.servo.is_some(),
         "目标不能为空"
     );
     if let Some(c) = &t.chassis {
@@ -74,6 +75,24 @@ pub fn targets(t: &pb::Targets, cfg: &Config) -> Result<()> {
                 range(*x, j.min_rad, j.max_rad, "关节目标")?;
             }
         }
+    }
+    if let Some(j) = &t.servo {
+        ensure!(
+            if j.right_arm {
+                cfg.right_arm.enabled
+            } else {
+                cfg.left_arm.enabled
+            },
+            "手臂已禁用"
+        );
+        ensure!(
+            j.joint_index < 4 && (500..=2500).contains(&j.position_pwm),
+            "手动舵机编号或位置无效"
+        );
+        ensure!(
+            t.left_arm.is_none() && t.right_arm.is_none(),
+            "手动与整臂目标不能同时发送"
+        );
     }
     if let Some(p) = &t.eyes {
         ensure!(cfg.eyes.enabled, "眼屏已禁用");

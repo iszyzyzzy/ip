@@ -4,6 +4,8 @@ import { Hand, OctagonX, Power, Unlock } from '@lucide/vue'
 import ActionsPanel from '@/components/ActionsPanel.vue'
 import ChassisPanel from '@/components/ChassisPanel.vue'
 import HeadPanel from '@/components/HeadPanel.vue'
+import ServoPanel from '@/components/ServoPanel.vue'
+import EyesPanel from '@/components/EyesPanel.vue'
 import StatusPanel from '@/components/StatusPanel.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -15,15 +17,17 @@ import { useRemote } from '@/lib/remote'
 
 const remote = useRemote()
 const config = ref<Record<string, any> | null>(null)
+const configRevision = ref('')
 const tokenInput = ref('')
 const now = ref(Date.now())
 let clock = 0
 
-// 配置只用于读取限位；变更后 config_revision 增加，随之重新读取。
+// 以robotd版本为准，防止眼屏参数覆盖别处刚更新的配置。
 async function loadConfig() {
   try {
-    const result = await remote.command<{ config: Record<string, any> }>('get_config')
+    const result = await remote.command<{ config: Record<string, any>, revision: string }>('get_config')
     config.value = result.config
+    configRevision.value = result.revision
   } catch { /* 提示已显示，摇杆回退到默认限位 */ }
 }
 
@@ -110,9 +114,11 @@ function submitToken() {
       </p>
 
       <Tabs default-value="chassis" orientation="horizontal" class="flex-1 flex-col">
-        <TabsList class="grid h-11 w-full grid-cols-4">
+        <TabsList class="grid h-11 w-full grid-cols-6">
           <TabsTrigger value="chassis">底盘</TabsTrigger>
           <TabsTrigger value="head">头部</TabsTrigger>
+          <TabsTrigger value="servo">手动</TabsTrigger>
+          <TabsTrigger value="eyes">眼屏</TabsTrigger>
           <TabsTrigger value="actions">动作</TabsTrigger>
           <TabsTrigger value="status">状态</TabsTrigger>
         </TabsList>
@@ -122,6 +128,12 @@ function submitToken() {
         </TabsContent>
         <TabsContent value="head" class="pt-3" force-mount>
           <HeadPanel :config="config" />
+        </TabsContent>
+        <TabsContent value="servo" class="pt-3" force-mount>
+          <ServoPanel :config="config" />
+        </TabsContent>
+        <TabsContent value="eyes" class="pt-3" force-mount>
+          <EyesPanel :config="config" :revision="configRevision" @saved="loadConfig" />
         </TabsContent>
         <TabsContent value="actions" class="pt-3" force-mount>
           <ActionsPanel />

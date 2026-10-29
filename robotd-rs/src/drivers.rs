@@ -81,6 +81,9 @@ pub fn chassis_payload(t: &pb::ChassisTarget) -> [u8; 8] {
     }
     data
 }
+pub fn servo_position_command(id: u8, position: u32) -> String {
+    format!("#{id:03}P{position:04}T0001!")
+}
 fn u16be(d: &[u8], i: usize) -> u16 {
     u16::from_be_bytes([d[i], d[i + 1]])
 }
@@ -178,7 +181,7 @@ impl Servo {
                 }
                 let mut settings = Rs485 {
                     flags: 1 | if cfg.rts_tx { 2 } else { 4 },
-                    before: 0,
+                    before: 1,
                     after: 0,
                     padding: [0; 5],
                 };
@@ -239,6 +242,11 @@ impl Servo {
             )?;
         }
         Ok(())
+    }
+    fn manual(&mut self, t: &pb::ServoTarget) -> Result<()> {
+        let j = &self.cfg.joints[t.joint_index as usize];
+        // 手动指定原始位置，不重写零点；T0001由实机调试确定。
+        self.send(servo_position_command(j.id, t.position_pwm).as_bytes())
     }
     fn stop(&mut self) -> Result<()> {
         let mut errors = Vec::new();
@@ -433,6 +441,17 @@ impl Hardware {
                 })??
                 .into_inner()
                 .revision;
+            if h.eye_cfg.mode == Some(ep::Mode::Ifacialmocap as i32)
+                && h.eye_cfg.phone_ip.as_ref().is_some_and(|ip| !ip.is_empty())
+            {
+                h.rt.block_on(async {
+                    tokio::time::timeout(
+                        Duration::from_millis(300),
+                        eye.connect_tracking(ep::Empty {}),
+                    )
+                    .await
+                })??;
+            }
             h.eye = Some(eye);
         }
         h.begin()?;
@@ -516,6 +535,12 @@ impl Devices for Hardware {
                     .ok_or_else(|| anyhow::anyhow!("手臂未连接"))?
                     .target(t)?;
             }
+        }
+        if let Some(target) = &t.servo {
+            self.arms[usize::from(target.right_arm)]
+                .as_mut()
+                .ok_or_else(|| anyhow::anyhow!("手臂未连接"))?
+                .manual(target)?;
         }
         if let Some(p) = &t.eyes {
             let eye = self

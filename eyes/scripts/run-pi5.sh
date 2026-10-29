@@ -5,7 +5,7 @@ phone=${1:-}
 bundle=${EYES_BUNDLE:-"$HOME/eyes/dist/eyes-linux"}
 cd "$bundle"
 export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-"/run/user/$(id -u)"}
-socket="$XDG_RUNTIME_DIR/eyes.sock"
+socket=${EYES_SOCKET:-"$XDG_RUNTIME_DIR/eyes.sock"}
 config=$(mktemp)
 child=
 cleanup() {

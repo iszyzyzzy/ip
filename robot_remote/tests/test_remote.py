@@ -32,6 +32,20 @@ class RemoteTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(reply.status, status, payload)
             return payload
 
+    async def test_manual_servo_target_through_gateway(self):
+        snapshot = (await self.api("GET", "/api/config"))["result"]
+        snapshot["config"]["left_arm"]["enabled"] = True
+        await self.api("PUT", "/api/config", {"expected_revision": snapshot["revision"], "config": snapshot["config"]})
+        session = await self.acquire()
+        await self.api("POST", "/api/targets", {"session_id": session, "targets": {
+            "servo": {"joint_index": 2, "position_pwm": 904}}})
+        state = await self.state_until(lambda state: not state["stopped"])
+        event = next(e for e in reversed(state["devices"]["events"]) if e["operation"] == "targets")
+        self.assertEqual(event["value"]["servo"]["positionPwm"], 904)
+        self.assertNotIn("leftArm", event["value"])
+        await self.api("POST", "/api/targets", {"session_id": session, "targets": {
+            "servo": {"joint_index": 4, "position_pwm": 904}}}, status=400)
+
     async def acquire(self, ttl=1000):
         result = await self.api("POST", "/api/control/acquire", {"owner": "http", "ttl_ms": ttl})
         self.assertNotIn("token", result["result"])

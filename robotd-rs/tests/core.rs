@@ -97,3 +97,34 @@ fn persisted_action_json_and_delete_revision() {
     assert!(store.put(&a, 0).is_err());
     assert_eq!(store.put(&a, 2).unwrap(), 3);
 }
+
+#[test]
+fn manual_servo_is_individual_and_uses_fast_position_command() {
+    use robotd::drivers::servo_position_command;
+    let mut c = Config::defaults();
+    c.left_arm.enabled = true;
+    c.right_arm.enabled = false;
+    let mut target = pb::Targets {
+        servo: Some(pb::ServoTarget {
+            right_arm: false,
+            joint_index: 2,
+            position_pwm: 904,
+        }),
+        ..Default::default()
+    };
+    validation::targets(&target, &c).unwrap();
+    assert_eq!(
+        servo_position_command(c.left_arm.joints[2].id, 904),
+        "#002P0904T0001!"
+    );
+    target.servo.as_mut().unwrap().right_arm = true;
+    assert!(validation::targets(&target, &c).is_err());
+    target.servo.as_mut().unwrap().right_arm = false;
+    target.servo.as_mut().unwrap().joint_index = 4;
+    assert!(validation::targets(&target, &c).is_err());
+    target.servo.as_mut().unwrap().joint_index = 0;
+    target.servo.as_mut().unwrap().position_pwm = 499;
+    assert!(validation::targets(&target, &c).is_err());
+    target.servo.as_mut().unwrap().position_pwm = 2501;
+    assert!(validation::targets(&target, &c).is_err());
+}

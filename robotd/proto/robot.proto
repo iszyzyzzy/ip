@@ -44,6 +44,12 @@ message ChassisTarget {
 }
 message NeckTarget { optional double yaw_rad = 1; optional double pitch_rad = 2; }
 message ArmTarget { repeated double joint_rad = 1; uint32 duration_ms = 2; }
+// 调试位置使用舵机原始读数，不改变关节标定；运动时间固定为0001。
+message ServoTarget {
+  bool right_arm = 1;
+  uint32 joint_index = 2; // 根部到末端，0..3
+  uint32 position_pwm = 3; // 500..2500
+}
 message Targets {
   ChassisTarget chassis = 1;
   NeckTarget neck = 2;
@@ -51,6 +57,7 @@ message Targets {
   ArmTarget right_arm = 4;
   eyes.v1.Pose eyes = 5;
   eyes.v1.BlinkRequest blink = 6;
+  ServoTarget servo = 7;
 }
 message TargetRequest { string token = 1; Targets targets = 2; }
 message StopRequest { bool latch = 1; }
