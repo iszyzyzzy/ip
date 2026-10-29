@@ -89,11 +89,23 @@ fn eye(pos: vec2f, side: f32, data: vec4f, base: vec3f) -> vec3f {
     return color;
 }
 @fragment fn fs_main(v: Vertex) -> @location(0) vec4f {
-    let aspect = u.viewport.x / max(u.viewport.y, 1.);
+    var uv = v.uv;
+    var size = u.viewport.xy;
+    // 逆向查询未旋转的坐标；90/270度时交换逻辑宽高，避免非正方形输出拉伸。
+    if u.iris.w == 1. {
+        uv = vec2f(v.uv.y, 1. - v.uv.x);
+        size = size.yx;
+    } else if u.iris.w == 2. {
+        uv = 1. - v.uv;
+    } else if u.iris.w == 3. {
+        uv = vec2f(1. - v.uv.y, v.uv.x);
+        size = size.yx;
+    }
+    let aspect = size.x / max(size.y, 1.);
     // 单眼输出有自己的视口和中心，不依赖双眼窗口的眼距裁切。
     let single = abs(u.extra.w) > 0.5;
     let fit = select(min(1., aspect / 2.5), min(1.5, aspect / 0.68), single) * u.viewport.w;
-    var p = (v.uv - 0.5) * vec2f(aspect, 1.) / max(fit, 0.1);
+    var p = (uv - 0.5) * vec2f(aspect, 1.) / max(fit, 0.1);
     let roll = u.shape.w;
     p = mat2x2f(cos(roll), -sin(roll), sin(roll), cos(roll)) * p;
     var color = u.background.rgb;

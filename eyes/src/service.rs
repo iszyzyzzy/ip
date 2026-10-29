@@ -24,6 +24,7 @@ pub struct Options {
     pub right_device: Option<PathBuf>,
     pub connectors: [Option<String>; 2],
     pub modes: [Option<String>; 2],
+    pub rotations: [u16; 2],
     pub fps: u32,
     pub size: (u32, u32),
     pub preview: Option<PathBuf>,
@@ -44,6 +45,7 @@ impl Options {
             right_device: None,
             connectors: [None, None],
             modes: [None, None],
+            rotations: [0; 2],
             fps: 60,
             size: (480, 480),
             preview: None,
@@ -89,6 +91,13 @@ impl Options {
                 "--right-connector" => o.connectors[1] = Some(value()?),
                 "--left-mode" => o.modes[0] = Some(value()?),
                 "--right-mode" => o.modes[1] = Some(value()?),
+                "--left-rotation" | "--right-rotation" => {
+                    let degrees = value()?.parse::<u16>()?;
+                    if ![0, 90, 180, 270].contains(&degrees) {
+                        return Err("安装旋转只支持顺时针 0、90、180、270 度".into());
+                    }
+                    o.rotations[usize::from(arg == "--right-rotation")] = degrees;
+                }
                 "--fps" => {
                     o.fps = value()?.parse()?;
                     if !(1..=120).contains(&o.fps) {
@@ -111,11 +120,15 @@ impl Options {
         if o.output != Output::Window && o.screenshot.is_some() {
             return Err("--screenshot 用于窗口；双眼离屏截图请使用 --offscreen DIR".into());
         }
+        if o.rotations != [0; 2] && !matches!(o.output, Output::Drm | Output::Offscreen) {
+            return Err("安装旋转用于 --headless / --drm 或 --offscreen 输出".into());
+        }
         Ok(o)
     }
 }
 
 pub fn help() {
+    println!("安装补偿：--left-rotation / --right-rotation 0|90|180|270（顺时针；DRM和离屏输出）");
     println!(
         "眼屏应用\n默认：Windows / Linux 窗口渲染\n  --headless / --drm              Linux 无桌面 GPU 渲染，DRM/KMS 直连双眼屏幕\n  --control-only                 仅控制诊断，不创建 GPU，不输出图像\n  --drm-device /dev/dri/card0      左眼设备，也作为默认右眼设备\n  --right-drm-device PATH         可选的另一块 DRM 设备\n  --left-connector DSI-1          左眼连接器名称或 ID\n  --right-connector DSI-2         右眼连接器名称或 ID\n  --left-mode WxH[@Hz]            左眼模式，默认首选模式\n  --right-mode WxH[@Hz]           右眼模式，默认首选模式\n  --list-drm                      列出设备的连接器、模式和 CRTC\n  --offscreen DIR --size 480x480  无窗口 GPU 渲染左右眼 PNG，便于检查\n  --fps 60                        无窗口循环帧率\n  --assets DIR --settings FILE --socket PATH --no-grpc\n  --exit-after SECONDS --screenshot FILE.ppm（窗口）\n所有后端保留 gRPC 和 UDP 面捕；--no-grpc 仅关闭 gRPC\nF5 重载素材 | Tab 面板 | F11 全屏 | Space 眨眼"
     );
@@ -201,7 +214,7 @@ pub fn run(o: Options) -> AssetResult<()> {
         if let Some(renderer) = &app.offscreen {
             let parameters = app.uniforms([1., 1.], t);
             for (eye, size) in sizes.into_iter().enumerate() {
-                let mut pixels = renderer.render(eye, parameters)?;
+                let mut pixels = renderer.render(eye, parameters, o.rotations[eye])?;
                 #[cfg(target_os = "linux")]
                 if let Some(d) = &mut displays {
                     d.write(eye, &pixels)?;
@@ -269,6 +282,22 @@ pub(crate) fn allocation<A: Copy + PartialEq, B: Copy + PartialEq>(
 mod tests {
     use super::*;
     #[test]
+    fn mounting_rotations_are_independent() {
+        let o = Options::parse(
+            [
+                "--headless",
+                "--left-rotation",
+                "90",
+                "--right-rotation",
+                "270",
+            ]
+            .into_iter()
+            .map(String::from),
+        )
+        .unwrap();
+        assert_eq!(o.rotations, [90, 270]);
+    }
+    #[test]
     fn allocation_avoids_greedy_conflict() {
         assert_eq!(
             super::allocation(&[vec![(1, 10), (2, 20)], vec![(1, 10)]]),
@@ -284,6 +313,8 @@ mod tests {
             vec!["--fps", "0"],
             vec!["--size", "0x480"],
             vec!["--exit-after", "NaN"],
+            vec!["--headless", "--left-rotation", "45"],
+            vec!["--left-rotation", "90"],
         ] {
             assert!(Options::parse(args.into_iter().map(String::from)).is_err());
         }

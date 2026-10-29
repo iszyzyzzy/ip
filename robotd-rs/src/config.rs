@@ -157,8 +157,12 @@ impl Config {
         );
         let c = &self.chassis;
         ensure!(
-            (2..=3).contains(&c.channel) && c.bitrate == 500000,
-            "底盘要求 CAN2/3、500 kbps"
+            (1..=3).contains(&c.channel) && c.bitrate == 500000,
+            "底盘要求 CAN1/2/3、500 kbps"
+        );
+        ensure!(
+            !(c.enabled && self.neck.enabled && c.channel == self.neck.channel),
+            "底盘500 kbps与颈部1 Mbps不能同时使用同一路CAN"
         );
         range(c.max_speed_m_s, 0.001, 1.5, "底盘速度")?;
         range(c.max_yaw_rate_rad_s, 0.001, 3.259, "底盘自旋速度")?;

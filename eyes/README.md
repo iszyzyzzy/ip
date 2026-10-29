@@ -75,6 +75,8 @@ EYES_BUNDLE="$HOME/eyes/dist/eyes-linux" sh scripts/run-pi5.sh 192.168.3.110
 目标为树莓派 `192.168.3.109:49983/UDP`。脚本不安装开机服务。
 默认目标帧率60，可用 `EYES_FPS=30` 调整；目标帧率不代表实测输出性能。
 
+Pi安装脚本现在默认两眼画面均顺时针旋转90°。可通过`EYES_LEFT_ROTATION=0`和`EYES_RIGHT_ROTATION=0`恢复原安装方向，或分别选择0/90/180/270。直接启动程序时默认仍为0，使用`--left-rotation 90 --right-rotation 90`显式设置；离屏预览同样支持这两个参数。旋转在GPU最终采样坐标完成，不增加CPU逐像素旋转，也不改变眼动、眨眼或头部滚转参数。部署时须同步更新程序、`assets/eyes.wgsl`和启动脚本。
+
 运行时状态可由发布包内的控制器查询：
 
 ```sh

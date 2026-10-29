@@ -9,6 +9,69 @@ struct Target {
     size: (u32, u32),
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "需要实际GPU；显式运行验证旋转方向及非正方形输出"]
+    fn mounting_rotation_matches_rotated_render() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
+        let (base, art) = Renderer::new(&root, [(192, 128); 2]).unwrap();
+        let (turned, _) = Renderer::new(&root, [(128, 192); 2]).unwrap();
+        let mut u = Uniforms::zero();
+        u.viewport[3] = 1.;
+        u.left = [0.2, -0.1, 0.65, 0.15];
+        u.right = [-0.35, 0.15, 1., -0.1];
+        u.shape[1] = 0.14;
+        u.iris = [0.15, 0.7, 1., 0.];
+        u.background = [0.01, 0.03, 0.06, 1.];
+        u.extra[1] = 0.45;
+        u.layers_a = [1.; 4];
+        u.layers_b = [1.; 4];
+        [u.contour, u.detail] = art.uniforms();
+        u.placement = art.placement_uniforms();
+        let captures = Path::new(env!("CARGO_MANIFEST_DIR")).join("captures/rotation-validation");
+        std::fs::create_dir_all(&captures).unwrap();
+        for eye in 0..2 {
+            let pixels = base.render(eye, u, 0).unwrap();
+            let original = image::RgbaImage::from_raw(192, 128, pixels).unwrap();
+            assert!(original.pixels().any(|p| p[0].abs_diff(p[2]) > 30));
+            for rotation in [90, 180, 270] {
+                let expected = match rotation {
+                    90 => image::imageops::rotate90(&original),
+                    180 => image::imageops::rotate180(&original),
+                    _ => image::imageops::rotate270(&original),
+                };
+                let renderer = if rotation == 180 { &base } else { &turned };
+                let mut actual = renderer.render(eye, u, rotation).unwrap();
+                let error: usize = actual
+                    .iter()
+                    .zip(expected.as_raw())
+                    .map(|(a, b)| usize::from(a.abs_diff(*b)))
+                    .sum();
+                assert!(
+                    (error as f64 / actual.len() as f64) < 0.1,
+                    "eye={eye} rotation={rotation} error={error}"
+                );
+                if rotation == 90 {
+                    for pixel in actual.as_chunks_mut::<4>().0 {
+                        pixel.swap(0, 2);
+                    }
+                    image::save_buffer(
+                        captures.join(format!("eye-{eye}-90.png")),
+                        &actual,
+                        128,
+                        192,
+                        image::ColorType::Rgba8,
+                    )
+                    .unwrap();
+                }
+            }
+        }
+    }
+}
+
 pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -92,12 +155,19 @@ impl Renderer {
         Ok(art)
     }
 
-    pub fn render(&self, eye: usize, mut uniforms: Uniforms) -> AssetResult<Vec<u8>> {
+    pub fn render(
+        &self,
+        eye: usize,
+        mut uniforms: Uniforms,
+        rotation: u16,
+    ) -> AssetResult<Vec<u8>> {
         let target = &self.targets[eye];
         uniforms.viewport[0] = target.size.0 as f32;
         uniforms.viewport[1] = target.size.1 as f32;
         uniforms.shape[0] = 0.;
         uniforms.extra[3] = if eye == 0 { 1. } else { -1. };
+        // 安装方向在最终采样坐标补偿，保留眼动和头部滚转自己的坐标系。
+        uniforms.iris[3] = f32::from(rotation / 90);
         let view = target.texture.create_view(&Default::default());
         let mut encoder = self.device.create_command_encoder(&Default::default());
         {

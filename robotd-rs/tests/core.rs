@@ -40,6 +40,19 @@ fn protocol_crc_cobs_and_ranger_vectors() {
 }
 
 #[test]
+fn chassis_can1_requires_neck_disabled() {
+    let mut c = Config::defaults();
+    c.chassis.channel = 1;
+    c.chassis.enabled = true;
+    c.neck.enabled = false;
+    c.validate().unwrap();
+    c.neck.enabled = true;
+    assert!(c.validate().is_err());
+    c.chassis.enabled = false;
+    c.validate().unwrap();
+}
+
+#[test]
 fn config_validation_and_store_compare_and_swap() {
     let mut c = Config::defaults();
     c.left_arm.joints[1].id = 0;

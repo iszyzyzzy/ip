@@ -34,7 +34,9 @@ fi
     --drm-device /dev/dri/by-path/platform-1f00118000.dsi-card --left-connector DSI-1 \
     --right-drm-device /dev/dri/by-path/platform-1f00130000.dsi-card --right-connector DSI-2 \
     --assets "$bundle/assets" --settings "$bundle/eyes-settings.json" \
-    --socket "$socket" --fps "${EYES_FPS:-60}" &
+    --socket "$socket" --fps "${EYES_FPS:-60}" \
+    --left-rotation "${EYES_LEFT_ROTATION:-90}" \
+    --right-rotation "${EYES_RIGHT_ROTATION:-90}" &
 child=$!
 
 ready=false

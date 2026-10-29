@@ -546,7 +546,7 @@ impl EyesApp {
             left: self.eyes[0],
             right: self.eyes[1],
             shape: [s.separation, s.iris_size, s.expression, self.roll],
-            iris: [s.iris[0], s.iris[1], s.iris[2], 1.],
+            iris: [s.iris[0], s.iris[1], s.iris[2], 0.],
             background: [s.background[0], s.background[1], s.background[2], 1.],
             extra: [s.glow, s.pupil, s.tilt, 0.],
             layers_a: layer_flags[0],
