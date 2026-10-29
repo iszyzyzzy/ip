@@ -32,6 +32,33 @@ class RemoteTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(reply.status, status, payload)
             return payload
 
+    async def test_eye_preview_and_save_do_not_interrupt_motion_lease(self):
+        snapshot = (await self.api("GET", "/api/config"))["result"]
+        cfg = snapshot["config"]
+        cfg["eyes"]["enabled"] = True
+        snapshot = (await self.api("PUT", "/api/config", {"expected_revision": snapshot["revision"], "config": cfg}))["result"]
+        revision = snapshot["revision"]
+        session = await self.acquire(3000)
+        await self.api("POST", "/api/targets", {"session_id": session, "targets": {"neck": {"yaw_rad": 0.1}}})
+        settings = snapshot["config"]["eyes"]["settings"]
+        original = settings["pupil"]
+        settings["pupil"] = 0.41
+        for _ in range(3):
+            preview = (await self.api("PUT", "/api/eyes", {"expected_revision": revision, "settings": settings}))["result"]
+            self.assertEqual(preview["revision"], revision)
+        stored = (await self.api("GET", "/api/config"))["result"]
+        self.assertEqual(stored["config"]["eyes"]["settings"]["pupil"], original)
+        state = await self.state_until(lambda state: any(e["operation"] == "configure_eyes" for e in state["devices"]["events"]))
+        self.assertFalse(state["stopped"])
+        self.assertEqual(state["owner"], "http")
+        saved = (await self.api("PUT", "/api/eyes", {"expected_revision": revision, "settings": settings, "save": True}))["result"]
+        self.assertEqual(int(saved["revision"]), int(revision) + 1)
+        self.assertAlmostEqual(saved["config"]["eyes"]["settings"]["pupil"], 0.41)
+        await self.api("POST", "/api/control/renew", {"session_id": session})
+        await self.api("PUT", "/api/eyes", {"expected_revision": revision, "settings": settings}, status=409)
+        settings["pupil"] = 99
+        await self.api("PUT", "/api/eyes", {"expected_revision": saved["revision"], "settings": settings}, status=400)
+
     async def test_manual_servo_target_through_gateway(self):
         snapshot = (await self.api("GET", "/api/config"))["result"]
         snapshot["config"]["left_arm"]["enabled"] = True

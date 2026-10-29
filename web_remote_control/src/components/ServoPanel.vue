@@ -55,20 +55,24 @@ function nudge(index: number, delta: number) {
     </ToggleGroup>
     <p class="text-xs leading-relaxed text-muted-foreground">从根部到末端逐个调节。拖动滑条后松手发送位置，或输入读数后点击移动；运动时间固定为 0001，不改标定零点。</p>
     <p v-if="!arm?.enabled" class="rounded-lg bg-muted p-3 text-sm">这一侧舵机尚未启用。</p>
-    <section v-for="row in rows" :key="row.key" class="space-y-4 rounded-xl border p-4">
+    <section v-for="row in rows" :key="row.key" class="space-y-6 rounded-xl border p-4">
       <div class="flex items-center justify-between gap-3">
         <h3 class="text-sm font-medium">关节 {{ row.index + 1 }} <span class="ml-1 text-xs text-muted-foreground">ID {{ row.id }}</span></h3>
         <span class="text-sm tabular-nums" :class="row.fresh ? '' : 'text-muted-foreground'">{{ row.fresh ? `实际 ${row.feedback.pwm}` : row.feedback?.error || '等待反馈' }}</span>
       </div>
-      <Slider :model-value="[drafts[row.key] ?? 1500]" :min="500" :max="2500" :step="1"
+      <div class="rounded-lg bg-muted/40 px-4 py-6">
+      <Slider class="h-8 [&_[data-slot=slider-thumb]]:size-5" :model-value="[drafts[row.key] ?? 1500]" :min="500" :max="2500" :step="1"
         :aria-label="`关节${row.index + 1}目标位置`"
         :disabled="!remote.controlling.value || !arm?.enabled || !row.fresh || sending"
         @update:model-value="v => drafts[row.key] = v![0]!" @value-commit="v => move(row.index, v[0]!)" />
+      </div>
+      <div class="space-y-3 border-t pt-5">
       <div class="flex items-center gap-2">
-        <Button variant="outline" class="h-10" :disabled="!remote.controlling.value || !row.fresh || sending" @click="nudge(row.index, -10)">−10</Button>
-        <Input v-model.number="drafts[row.key]" type="number" min="500" max="2500" step="1" :aria-label="`关节${row.index + 1}目标读数`" class="h-10 min-w-0 text-center tabular-nums" />
-        <Button variant="outline" class="h-10" :disabled="!remote.controlling.value || !row.fresh || sending" @click="nudge(row.index, 10)">+10</Button>
-        <Button class="h-10" :disabled="!remote.controlling.value || !row.fresh || sending || !arm?.enabled" @click="move(row.index, drafts[row.key]!)">移动</Button>
+        <Button variant="outline" class="h-12 min-w-14" :disabled="!remote.controlling.value || !row.fresh || sending" @click="nudge(row.index, -10)">−10</Button>
+        <Input v-model.number="drafts[row.key]" type="number" min="500" max="2500" step="1" :aria-label="`关节${row.index + 1}目标读数`" class="h-12 min-w-0 text-center tabular-nums" />
+        <Button variant="outline" class="h-12 min-w-14" :disabled="!remote.controlling.value || !row.fresh || sending" @click="nudge(row.index, 10)">+10</Button>
+        <Button class="h-12 min-w-14" :disabled="!remote.controlling.value || !row.fresh || sending || !arm?.enabled" @click="move(row.index, drafts[row.key]!)">移动</Button>
+      </div>
       </div>
       <Button variant="ghost" class="h-9 w-full text-xs text-muted-foreground" :disabled="!remote.controlling.value || !row.fresh || sending || !arm?.enabled" @click="move(row.index, row.feedback.pwm, true)">恢复保持当前位置</Button>
     </section>

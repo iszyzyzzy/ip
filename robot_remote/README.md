@@ -59,6 +59,7 @@ robot-remote --allow-origin http://localhost:5173
 | `GET /api/state` | 无 | `get_state` |
 | `GET /api/config` | 无 | `get_config` |
 | `PUT /api/config` | `expected_revision`, `config` | `update_config` |
+| `PUT /api/eyes` | `expected_revision`, `settings`, `save`, `connect_tracking` | `update_eyes` |
 | `GET /api/actions` | 无 | `list_actions` |
 | `POST /api/actions` | `expected_revision`, `action` | `put_action` |
 | `DELETE /api/actions` | `expected_revision`, `name` | `delete_action` |

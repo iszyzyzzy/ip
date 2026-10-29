@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import GazePad from '@/components/GazePad.vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -17,6 +17,11 @@ const saving = ref(false)
 const dirty = ref(false)
 const saved = ref(false)
 const baseRevision = ref('')
+const previewState = ref('live')
+const previewPhone = ref('')
+let previewTimer = 0
+let previewPending = false
+let previewRequest: Promise<void> | null = null
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value))
 const sliders = [
   { key: 'scale', label: '眼睛大小', min: 0.5, max: 1.5, step: 0.01, unit: '×' },
@@ -29,6 +34,7 @@ watch(() => [props.config?.eyes?.settings, props.revision] as const, ([settings,
     draft.value = clone(settings)
     if (!draft.value!.phone_ip) draft.value!.phone_ip = '192.168.3.110'
     baseRevision.value = revision
+    previewPhone.value = settings.phone_ip ?? ''
   }
 }, { immediate: true })
 function setGaze(x: number, y: number) {
@@ -39,11 +45,42 @@ function setGaze(x: number, y: number) {
   draft.value.simulator.eye_motion = false
   changed()
 }
-function changed() { dirty.value = true; saved.value = false }
+function changed() {
+  dirty.value = true; saved.value = false
+  schedulePreview()
+}
+function phoneChanged() { dirty.value = true; saved.value = false }
+function cancelPreview() { clearTimeout(previewTimer); previewTimer = 0; previewPending = false }
+function schedulePreview() {
+  if (!remote.online.value || !props.config?.eyes?.enabled || saving.value) return
+  previewPending = true
+  previewState.value = 'pending'
+  if (!previewTimer && !previewRequest) previewTimer = window.setTimeout(flushPreview, 50)
+}
+function flushPreview() {
+  clearTimeout(previewTimer); previewTimer = 0
+  if (!previewPending || !draft.value || !remote.online.value || saving.value) return
+  previewPending = false
+  if (props.revision !== baseRevision.value) { previewState.value = 'conflict'; return }
+  const settings = clone(draft.value)
+  // 地址只在明确连接或保存时提交，避免输入中的半个IP打断外观预览。
+  settings.phone_ip = previewPhone.value
+  previewRequest = remote.command('update_eyes', { expected_revision: baseRevision.value, settings })
+    .then(() => { previewState.value = 'live' })
+    .catch(() => { cancelPreview(); previewState.value = 'error' })
+    .finally(() => {
+      previewRequest = null
+      if (previewPending) schedulePreview()
+    })
+}
+watch(() => remote.online.value, on => { if (!on) cancelPreview() })
+onBeforeUnmount(cancelPreview)
 function reset() {
   if (props.config?.eyes?.settings) draft.value = clone(props.config.eyes.settings)
   baseRevision.value = props.revision
+  previewPhone.value = props.config?.eyes?.settings?.phone_ip ?? ''
   dirty.value = false; saved.value = false
+  schedulePreview()
 }
 function color(value: any) {
   return '#' + ['r', 'g', 'b'].map(k => Math.round((value?.[k] ?? 1) * 255).toString(16).padStart(2, '0')).join('')
@@ -67,23 +104,30 @@ async function apply(face = false) {
   }
   const settings = clone(draft.value)
   const ip = String(settings.phone_ip ?? '').trim()
-  if ((face || settings.mode === 'IFACIALMOCAP') && (!/^\d{1,3}(\.\d{1,3}){3}$/.test(ip) || ip.split('.').some(v => Number(v) > 255))) {
+  const validIp = /^\d{1,3}(\.\d{1,3}){3}$/.test(ip) && ip.split('.').every(v => Number(v) <= 255)
+  if ((ip && !validIp) || ((face || settings.mode === 'IFACIALMOCAP') && !validIp)) {
     remote.message.value = '请输入有效的面捕手机IPv4地址'
     return
   }
   settings.phone_ip = ip
   if (face) settings.mode = 'IFACIALMOCAP'
   saving.value = true
+  cancelPreview()
   try {
-    // 配置会撤销控制权，先结束续期；仍由robotd保存全部配置及版本。
-    await remote.release()
-    const config = clone(props.config)
-    config.eyes.settings = settings
-    await remote.command('update_config', { expected_revision: props.revision, config })
+    // 等待已发出的预览结束，保证旧预览不会在保存之后覆盖新参数。
+    await previewRequest
+    const result = await remote.command<{ revision: string }>('update_eyes', {
+      expected_revision: baseRevision.value, settings, save: !face, connect_tracking: face,
+    })
     draft.value = settings
-    dirty.value = false; saved.value = true
-    emit('saved')
-  } catch { /* 版本冲突保留草稿，用户可重新载入。 */ }
+    previewPhone.value = ip
+    previewState.value = 'live'
+    if (!face) {
+      baseRevision.value = result.revision
+      dirty.value = false; saved.value = true
+      emit('saved')
+    } else { dirty.value = true; saved.value = false }
+  } catch { previewState.value = 'error' }
   finally { saving.value = false }
 }
 function blink() { remote.targets({ blink: { left: true, right: true } }, true) }
@@ -91,6 +135,7 @@ function blink() { remote.targets({ blink: { left: true, right: true } }, true) 
 
 <template>
   <div v-if="draft" class="flex flex-col gap-4">
+    <div class="flex items-center justify-between text-xs text-muted-foreground"><span>实时预览 · 保存后下次启动沿用</span><span>{{ previewState === 'pending' ? '同步中…' : previewState === 'error' ? '同步失败' : previewState === 'conflict' ? '配置已变化，请重新载入' : '已同步' }}</span></div>
     <section class="space-y-4 rounded-xl border p-4">
       <div class="flex items-center justify-between">
         <h3 class="text-sm font-medium">渲染模式</h3>
@@ -104,13 +149,13 @@ function blink() { remote.targets({ blink: { left: true, right: true } }, true) 
       <div v-if="draft.mode === 'SIMULATOR'" class="space-y-3">
         <div class="flex items-center justify-between"><Label>注视位置</Label><Button variant="ghost" size="sm" @click="setGaze(0, 0)">回中</Button></div>
         <GazePad :x="draft.simulator.target_x" :y="draft.simulator.target_y" @change="setGaze" />
-        <p class="text-xs text-muted-foreground">点击或拖动圆点选择方向，松手保持；点击下方“应用并保存”生效。</p>
+        <p class="text-xs text-muted-foreground">点击或拖动圆点，屏幕会实时跟随，松手保持。</p>
         <div class="flex items-center justify-between"><Label for="gaze-saccades">目标附近轻微眼动</Label><Switch id="gaze-saccades" v-model="draft.simulator.eye_motion" @update:model-value="changed" /></div>
       </div>
       <div class="space-y-2">
         <Label for="phone-ip">面捕手机 IP</Label>
         <div class="flex gap-2">
-          <Input id="phone-ip" v-model="draft.phone_ip" placeholder="192.168.3.110" inputmode="decimal" class="h-11 min-w-0" @input="changed" />
+          <Input id="phone-ip" v-model="draft.phone_ip" placeholder="192.168.3.110" inputmode="decimal" class="h-11 min-w-0" @input="phoneChanged" />
           <Button variant="secondary" class="h-11" :disabled="!remote.online.value || saving || !props.config?.eyes?.enabled" @click="apply(true)">连接面捕</Button>
         </div>
         <p class="text-xs text-muted-foreground">手机打开 iFacialMocap，发送到树莓派 192.168.3.109 · UDP {{ draft.tracking_port }}。</p>
@@ -146,11 +191,11 @@ function blink() { remote.targets({ blink: { left: true, right: true } }, true) 
       <Button variant="secondary" class="h-11 w-full" :disabled="!remote.controlling.value || !props.config?.eyes?.enabled" @click="blink">试一下眨眼</Button>
     </section>
 
-    <p v-if="!props.config?.eyes?.enabled" class="rounded-lg bg-muted p-3 text-sm">眼屏尚未接入 robotd，配置可保存，接入后生效。</p>
-    <p class="text-xs text-muted-foreground">应用会停止当前控制并保存参数。之后可重新取得控制；断开手机不会阻止独立渲染。</p>
+    <p v-if="!props.config?.eyes?.enabled" class="rounded-lg bg-muted p-3 text-sm">眼屏尚未接入 robotd，接入后可实时调节。</p>
+    <p class="text-xs text-muted-foreground">拖动即生效，保存后下次启动沿用；实时预览和保存都不会中断舵机或底盘控制。</p>
     <div class="grid grid-cols-2 gap-2">
       <Button variant="outline" class="h-11" :disabled="saving" @click="reset">重新载入</Button>
-      <Button class="h-11" :disabled="!remote.online.value || saving" @click="apply()">{{ saving ? '应用中…' : saved ? '已应用并保存' : '应用并保存' }}</Button>
+      <Button class="h-11" :disabled="!remote.online.value || saving" @click="apply()">{{ saving ? '应用中…' : saved ? '已保存参数' : '保存参数' }}</Button>
     </div>
   </div>
 </template>

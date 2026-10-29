@@ -20,6 +20,7 @@ use tonic::Status;
 pub enum Op {
     Config,
     Update(pb::ConfigUpdate),
+    Eyes(pb::EyesUpdate),
     Acquire(pb::AcquireRequest),
     Renew(pb::LeaseRequest),
     Release(pb::LeaseRequest),
@@ -347,6 +348,31 @@ impl Engine {
                 self.config_revision = self.store.update(r.expected_revision, &cfg)?;
                 self.cfg = cfg;
                 self.reconnect();
+                self.revision += 1;
+                Ok(self.config())
+            }
+            Op::Eyes(r) => {
+                if r.expected_revision != self.config_revision {
+                    return Err(Status::aborted("配置版本不一致"));
+                }
+                if !self.cfg.eyes.enabled {
+                    return Err(Status::failed_precondition("眼屏已禁用"));
+                }
+                let mut value = self.cfg.value();
+                value["eyes"]["settings"] = crate::from_struct(r.settings)?;
+                let cfg = Config::parse(value).map_err(invalid)?;
+                let settings = &cfg.eyes.settings;
+                // 眼屏预览失败只报告该操作，不停止正在运行的底盘和关节。
+                self.devices
+                    .as_mut()
+                    .ok_or_else(|| Status::unavailable("设备未连接"))?
+                    .configure_eyes(settings, r.connect_tracking)
+                    .map_err(|e| Status::unavailable(format!("眼屏调节失败：{e}")))?;
+                if r.save {
+                    self.config_revision = self.store.update(r.expected_revision, &cfg)?;
+                    self.cfg = cfg;
+                    self.applied = self.config_revision;
+                }
                 self.revision += 1;
                 Ok(self.config())
             }

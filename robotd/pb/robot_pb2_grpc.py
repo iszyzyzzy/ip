@@ -45,6 +45,11 @@ class RobotControlStub:
                 request_serializer=robot__pb2.ConfigUpdate.SerializeToString,
                 response_deserializer=robot__pb2.ConfigSnapshot.FromString,
                 _registered_method=True)
+        self.UpdateEyes = channel.unary_unary(
+                '/robot.v1.RobotControl/UpdateEyes',
+                request_serializer=robot__pb2.EyesUpdate.SerializeToString,
+                response_deserializer=robot__pb2.ConfigSnapshot.FromString,
+                _registered_method=True)
         self.GetState = channel.unary_unary(
                 '/robot.v1.RobotControl/GetState',
                 request_serializer=robot__pb2.Empty.SerializeToString,
@@ -144,6 +149,13 @@ class RobotControlServicer:
 
     def UpdateConfig(self, request, context):
         """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def UpdateEyes(self, request, context):
+        """眼屏单独实时调节；save=true时持久化，不重连运动设备。
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -263,6 +275,11 @@ def add_RobotControlServicer_to_server(servicer, server):
             'UpdateConfig': grpc.unary_unary_rpc_method_handler(
                     servicer.UpdateConfig,
                     request_deserializer=robot__pb2.ConfigUpdate.FromString,
+                    response_serializer=robot__pb2.ConfigSnapshot.SerializeToString,
+            ),
+            'UpdateEyes': grpc.unary_unary_rpc_method_handler(
+                    servicer.UpdateEyes,
+                    request_deserializer=robot__pb2.EyesUpdate.FromString,
                     response_serializer=robot__pb2.ConfigSnapshot.SerializeToString,
             ),
             'GetState': grpc.unary_unary_rpc_method_handler(
@@ -405,6 +422,33 @@ class RobotControl:
             target,
             '/robot.v1.RobotControl/UpdateConfig',
             robot__pb2.ConfigUpdate.SerializeToString,
+            robot__pb2.ConfigSnapshot.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def UpdateEyes(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/robot.v1.RobotControl/UpdateEyes',
+            robot__pb2.EyesUpdate.SerializeToString,
             robot__pb2.ConfigSnapshot.FromString,
             options,
             channel_credentials,

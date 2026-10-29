@@ -61,6 +61,16 @@ impl RobotControl for Service {
             Config
         )
     }
+    async fn update_eyes(
+        &self,
+        r: Request<pb::EyesUpdate>,
+    ) -> Result<Response<pb::ConfigSnapshot>, Status> {
+        self.auth(&r)?;
+        reply!(
+            self.hub.request(Op::Eyes(r.into_inner()), false).await?,
+            Config
+        )
+    }
     async fn get_state(&self, r: Request<pb::Empty>) -> Result<Response<pb::RobotState>, Status> {
         self.auth(&r)?;
         Ok(Response::new(self.hub.snapshot()))

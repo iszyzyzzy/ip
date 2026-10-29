@@ -7,6 +7,8 @@ import "eyes.proto";
 service RobotControl {
   rpc GetConfig(Empty) returns (ConfigSnapshot);
   rpc UpdateConfig(ConfigUpdate) returns (ConfigSnapshot);
+  // 眼屏单独实时调节；save=true时持久化，不重连运动设备。
+  rpc UpdateEyes(EyesUpdate) returns (ConfigSnapshot);
   rpc GetState(Empty) returns (RobotState);
   rpc WatchState(WatchRequest) returns (stream RobotState);
   rpc AcquireControl(AcquireRequest) returns (Lease);
@@ -31,6 +33,7 @@ message Empty {}
 message Ack { uint64 revision = 1; }
 message ConfigSnapshot { uint64 revision = 1; google.protobuf.Struct config = 2; }
 message ConfigUpdate { uint64 expected_revision = 1; google.protobuf.Struct config = 2; }
+message EyesUpdate { uint64 expected_revision = 1; google.protobuf.Struct settings = 2; bool save = 3; bool connect_tracking = 4; }
 message AcquireRequest { string owner = 1; uint32 ttl_ms = 2; bool clear_latch = 3; }
 message LeaseRequest { string token = 1; }
 message Lease { string token = 1; string owner = 2; uint32 ttl_ms = 3; }

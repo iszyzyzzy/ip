@@ -17,6 +17,7 @@ use tonic::transport::{Channel, Endpoint};
 pub trait Devices: Send {
     fn begin(&mut self) -> Result<()>;
     fn apply(&mut self, t: &pb::Targets) -> Result<()>;
+    fn configure_eyes(&mut self, settings: &Value, connect_tracking: bool) -> Result<()>;
     fn stop(&mut self) -> Result<()>;
     fn stop_chassis(&mut self) -> Result<()>;
     fn zero(&mut self, mask: u8) -> Result<()>;
@@ -45,6 +46,13 @@ impl Devices for Simulated {
     }
     fn apply(&mut self, t: &pb::Targets) -> Result<()> {
         self.record("targets", serde_json::to_value(t)?);
+        Ok(())
+    }
+    fn configure_eyes(&mut self, settings: &Value, connect_tracking: bool) -> Result<()> {
+        self.record(
+            "configure_eyes",
+            json!({"settings": settings, "connect_tracking": connect_tracking}),
+        );
         Ok(())
     }
     fn stop(&mut self) -> Result<()> {
@@ -570,6 +578,30 @@ impl Devices for Hardware {
                 tokio::time::timeout(Duration::from_millis(300), eye.trigger_blink(*b)).await
             })??;
         }
+        Ok(())
+    }
+    fn configure_eyes(&mut self, settings: &Value, connect_tracking: bool) -> Result<()> {
+        let cfg: ep::Config = serde_json::from_value(settings.clone())?;
+        let eye = self
+            .eye
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("眼屏未连接"))?;
+        let revision = self.rt.block_on(async {
+            let reply =
+                tokio::time::timeout(Duration::from_millis(300), eye.configure(cfg.clone()))
+                    .await??;
+            if connect_tracking {
+                tokio::time::timeout(
+                    Duration::from_millis(300),
+                    eye.connect_tracking(ep::Empty {}),
+                )
+                .await??;
+            }
+            Ok::<_, anyhow::Error>(reply.into_inner().revision)
+        })?;
+        self.eye_cfg = cfg;
+        self.eye_revision = revision;
+        self.eye_pose = None;
         Ok(())
     }
     fn stop(&mut self) -> Result<()> {
