@@ -31,12 +31,12 @@ fi
 
 # 按平台路径选择两路 DSI，避免设备编号随加载顺序变化。
 ./eyes --headless \
-    --drm-device /dev/dri/by-path/platform-1f00118000.dsi-card --left-connector DSI-1 \
-    --right-drm-device /dev/dri/by-path/platform-1f00130000.dsi-card --right-connector DSI-2 \
+    --drm-device /dev/dri/by-path/platform-1f00130000.dsi-card --left-connector DSI-2 \
+    --right-drm-device /dev/dri/by-path/platform-1f00118000.dsi-card --right-connector DSI-1 \
     --assets "$bundle/assets" --settings "$bundle/eyes-settings.json" \
     --socket "$socket" --fps "${EYES_FPS:-60}" \
-    --left-rotation "${EYES_LEFT_ROTATION:-90}" \
-    --right-rotation "${EYES_RIGHT_ROTATION:-90}" &
+    --left-rotation "${EYES_LEFT_ROTATION:-270}" \
+    --right-rotation "${EYES_RIGHT_ROTATION:-270}" &
 child=$!
 
 ready=false
