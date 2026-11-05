@@ -21,6 +21,26 @@ sudo systemctl start robotd
 
 只读检查可使用 `python3 servo_tool.py --port u2 --id 1 status`。诊断错误回包（如 `PTPERROR`）会原样打印。
 
+## 一次性命令行版本
+
+`servo_cmd.py` 与菜单版功能对应，但每条命令单独执行一次，不询问、不做位置范围限制，适合脚本化和重复现场验证：
+
+```bash
+python3 servo_cmd.py --port u2 --id 1 status        # PVER/PID/PRAD/PMOD/PRDA
+python3 servo_cmd.py --port u2 --id 1 pos           # 只读位置
+python3 servo_cmd.py --port u2 --id 1 move 1800 --time 800   # P1800T0800
+python3 servo_cmd.py --port u2 --id 1 move 1500 --speed 300  # P1500V0300
+python3 servo_cmd.py --port u2 --id 1 swing --delta 30 --time 1000
+python3 servo_cmd.py --port u2 --id 1 free          # PULK
+python3 servo_cmd.py --port u2 --id 1 hold          # PULR
+python3 servo_cmd.py --port u2 --id 1 stop          # PDST
+python3 servo_cmd.py --port u2 --id 1 save          # PCSD
+python3 servo_cmd.py --port u2 --id 1 id 5          # 改ID并在新地址读回PVER
+python3 servo_cmd.py --port u2 --id 1 raw P1500T1000
+```
+
+位置直接按协议4位位置单位下发，脚本不做500～2500或机构行程判断，越界由舵机自身软限位/保护决定；执行前自行确认机构与线缆余量。`--wait` 可覆盖每种命令默认的回包等待秒数。robotd 正在运行时只打印提示而不阻止，串口占用由内核/独占打开协商。错误回包原样打印，收到的错误或改ID未验证时退出码非0。`swing` 先 `PRAD` 取起点再双向摆动回原位，按 Ctrl+C 中断不会自动脱力。
+
 ## 双臂整体往返
 
 `servo_roundtrip.py` 与 `servo_tool.py` 放在同一目录。默认U2、U3每侧ID 1/2/3/4，共8颗；先读取全部起点，任何一颗读不到就不开始。每颗从自身起点增加200位置单位，默认每段3秒，再返回自身起点；近同时逐颗下发，不保证硬件同步。协议范围500～2500只作为数值检查，不代表机构和线缆行程。
