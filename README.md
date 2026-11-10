@@ -6,6 +6,7 @@
 
 - [H7 固件与上位机协议](h7/README.md)：三路 CAN、GM6020/DM4310 位置闭环。
 - [眼屏渲染](eyes/README.md)：双眼渲染及本地 gRPC。
+- [树莓派网络恢复与遥控热点](robotd/deploy/network/README.md)：配置备份、失联热点与交付模式。
 - [底盘协议资料](agv.md)：RANGER AIR。
 
 ## H7
