@@ -21,7 +21,13 @@ export interface RobotState {
 export interface ActionRecord {
   revision: string
   deleted: boolean
-  action: { name: string, duration_ms: number, steps: unknown[] }
+  action: {
+    name: string
+    duration_ms?: number
+    steps?: unknown[]
+    preset?: { move_ms: number, targets: { eye_expression?: string, left_arm?: unknown, right_arm?: unknown, neck?: unknown } }
+    sequence?: { steps: { preset: string, move_ms?: number, hold_ms: number }[] }
+  }
 }
 
 type Link = 'idle' | 'connecting' | 'auth' | 'ready' | 'closed'

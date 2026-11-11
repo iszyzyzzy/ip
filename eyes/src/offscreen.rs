@@ -14,6 +14,51 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "需要实际 GPU；显式运行检查表情渲染与左右镜像"]
+    fn expressions_render_distinct_mirrored_shapes() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
+        let (renderer, art) = Renderer::new(&root, [(192, 192); 2]).unwrap();
+        let mut u = Uniforms::zero();
+        u.viewport[3] = 1.;
+        u.background = [1., 0.945, 0.94, 1.];
+        u.placement = art.placement_uniforms();
+        let happy = renderer.render(1, u, 0).unwrap();
+        u.background[3] = 2.;
+        let excited = renderer.render(1, u, 0).unwrap();
+        let other = renderer.render(0, u, 0).unwrap();
+        assert!(happy.chunks_exact(4).filter(|p| p[0] < 128).count() > 100);
+        assert!(excited.chunks_exact(4).filter(|p| p[0] < 128).count() > 100);
+        let changed = happy
+            .iter()
+            .zip(&excited)
+            .filter(|(a, b)| a.abs_diff(**b) > 30)
+            .count();
+        assert!(changed > 100);
+        let to_image = |mut bytes: Vec<u8>| {
+            for pixel in bytes.chunks_exact_mut(4) {
+                pixel.swap(0, 2);
+            }
+            image::RgbaImage::from_raw(192, 192, bytes).unwrap()
+        };
+        let left = to_image(excited);
+        let right = to_image(other);
+        let mirrored = image::imageops::flip_horizontal(&left);
+        let error: usize = mirrored
+            .as_raw()
+            .iter()
+            .zip(right.as_raw())
+            .map(|(a, b)| usize::from(a.abs_diff(*b)))
+            .sum();
+        assert!((error as f64 / right.as_raw().len() as f64) < 0.5);
+        let mut preview = image::RgbaImage::new(384, 192);
+        image::imageops::replace(&mut preview, &left, 0, 0);
+        image::imageops::replace(&mut preview, &right, 192, 0);
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("captures");
+        std::fs::create_dir_all(&dir).unwrap();
+        preview.save(dir.join("excited-preview.png")).unwrap();
+    }
+
+    #[test]
     #[ignore = "需要实际GPU；显式运行验证旋转方向及非正方形输出"]
     fn mounting_rotation_matches_rotated_render() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
@@ -25,7 +70,7 @@ mod tests {
         u.right = [-0.35, 0.15, 1., -0.1];
         u.shape[1] = 0.14;
         u.iris = [0.15, 0.7, 1., 0.];
-        u.background = [0.01, 0.03, 0.06, 1.];
+        u.background = [0.01, 0.03, 0.06, 0.];
         u.extra[1] = 0.45;
         u.layers_a = [1.; 4];
         u.layers_b = [1.; 4];

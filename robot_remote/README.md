@@ -62,6 +62,7 @@ robot-remote --allow-origin http://localhost:5173
 | `PUT /api/eyes` | `expected_revision`, `settings`, `save`, `connect_tracking` | `update_eyes` |
 | `GET /api/actions` | 无 | `list_actions` |
 | `POST /api/actions` | `expected_revision`, `action` | `put_action` |
+| `POST /api/actions/capture` | `name`, `expected_revision`, `move_ms`，按需填写 `left_arm`, `right_arm`, `neck`, `eye_expression` | `capture_preset` |
 | `DELETE /api/actions` | `expected_revision`, `name` | `delete_action` |
 | `POST /api/control/acquire` | `owner`, `ttl_ms`, `clear_latch`，均可省略 | `acquire` |
 | `POST /api/control/renew` | `session_id` | `renew` |
@@ -72,7 +73,9 @@ robot-remote --allow-origin http://localhost:5173
 | `POST /api/actions/run` | `session_id`, `name` | `run_action` |
 | `POST /api/actions/cancel` | `session_id` | `cancel_action` |
 
-参数沿用 [robot.proto](../robotd/proto/robot.proto) 的 snake_case 字段及 Protobuf JSON 格式；uint64 revision 返回十进制字符串，回传时保留字符串即可。未知字段拒绝。`targets` 支持底盘、颈部、左右臂、眼睛及眨眼，单位与 [robotd](../robotd/README.md) 一致。
+参数沿用 [robot.proto](../robotd/proto/robot.proto) 的 snake_case 字段及 Protobuf JSON 格式；uint64 revision 返回十进制字符串，回传时保留字符串即可。未知字段拒绝。`targets` 支持底盘、颈部、左右臂、眼睛、表情及眨眼，单位与 [robotd](../robotd/README.md) 一致。
+
+例如 `{"name":"挥手起点","expected_revision":"0","right_arm":true,"eye_expression":"HAPPY","move_ms":500}` 会保存右臂当前读数和笑眼表情。序列通过 `POST /api/actions` 提交，`action.sequence.steps` 中每项填预设名 `preset`、可选 `move_ms` 和 `hold_ms`。
 
 `acquire` 默认 `owner="web-remote"`、`ttl_ms=1000`，范围 200..5000 ms。返回：
 

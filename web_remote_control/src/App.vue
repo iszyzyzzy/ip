@@ -18,7 +18,10 @@ import { useRemote } from '@/lib/remote'
 const remote = useRemote()
 const config = ref<Record<string, any> | null>(null)
 const configRevision = ref('')
+const mode = ref<'operate' | 'debug'>('operate')
+const tab = ref('chassis')
 const tokenInput = ref('')
+watch(mode, value => { tab.value = value === 'debug' ? 'servo' : 'chassis' })
 const now = ref(Date.now())
 let clock = 0
 
@@ -113,30 +116,34 @@ function submitToken() {
         已锁定停止。确认安全后点击“解锁并控制”。
       </p>
 
-      <Tabs default-value="chassis" orientation="horizontal" class="flex-1 flex-col">
-        <TabsList class="grid h-11 w-full grid-cols-6">
-          <TabsTrigger value="chassis">底盘</TabsTrigger>
+      <div class="grid grid-cols-2 gap-1 rounded-lg bg-muted p-1" role="group" aria-label="遥控模式">
+        <Button :variant="mode === 'operate' ? 'secondary' : 'ghost'" :aria-pressed="mode === 'operate'" @click="mode = 'operate'">操作</Button>
+        <Button :variant="mode === 'debug' ? 'secondary' : 'ghost'" :aria-pressed="mode === 'debug'" @click="mode = 'debug'">调试</Button>
+      </div>
+      <Tabs v-model="tab" orientation="horizontal" class="flex-1 flex-col">
+        <TabsList class="grid h-11 w-full" :class="mode === 'debug' ? 'grid-cols-5' : 'grid-cols-4'">
+          <TabsTrigger v-if="mode === 'operate'" value="chassis">底盘</TabsTrigger>
           <TabsTrigger value="head">头部</TabsTrigger>
-          <TabsTrigger value="servo">手动</TabsTrigger>
-          <TabsTrigger value="eyes">眼屏</TabsTrigger>
+          <TabsTrigger v-if="mode === 'debug'" value="servo">手动</TabsTrigger>
+          <TabsTrigger v-if="mode === 'debug'" value="eyes">眼屏</TabsTrigger>
           <TabsTrigger value="actions">动作</TabsTrigger>
           <TabsTrigger value="status">状态</TabsTrigger>
         </TabsList>
         <!-- 保持挂载：头部摇杆显示的位置须与已下发的颈部目标一致，切换标签不能重置。 -->
-        <TabsContent value="chassis" class="pt-3" force-mount>
+        <TabsContent v-if="mode === 'operate'" value="chassis" class="pt-3" force-mount>
           <ChassisPanel :config="config" />
         </TabsContent>
         <TabsContent value="head" class="pt-3" force-mount>
-          <HeadPanel :config="config" />
+          <HeadPanel :config="config" :debug="mode === 'debug'" />
         </TabsContent>
-        <TabsContent value="servo" class="pt-3" force-mount>
+        <TabsContent v-if="mode === 'debug'" value="servo" class="pt-3" force-mount>
           <ServoPanel :config="config" />
         </TabsContent>
-        <TabsContent value="eyes" class="pt-3" force-mount>
+        <TabsContent v-if="mode === 'debug'" value="eyes" class="pt-3" force-mount>
           <EyesPanel :config="config" :revision="configRevision" @saved="loadConfig" />
         </TabsContent>
         <TabsContent value="actions" class="pt-3" force-mount>
-          <ActionsPanel />
+          <ActionsPanel :debug="mode === 'debug'" :config="config" />
         </TabsContent>
         <TabsContent value="status" class="pt-3" force-mount>
           <StatusPanel />

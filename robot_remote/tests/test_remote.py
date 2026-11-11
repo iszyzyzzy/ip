@@ -220,6 +220,37 @@ class RemoteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(unknown["error"]["code"], "NOT_FOUND")
         await ws.close()
 
+    async def test_preset_sequence_runs_snapshot_and_releases_on_cancel(self):
+        config = (await self.api("GET", "/api/config"))["result"]
+        config["config"]["eyes"]["enabled"] = True
+        await self.api("PUT", "/api/config", {
+            "expected_revision": config["revision"], "config": config["config"],
+        })
+        for name, expression in [("笑眼", "HAPPY"), ("兴奋", "EXCITED")]:
+            await self.api("POST", "/api/actions/capture", {
+                "name": name, "move_ms": 100, "eye_expression": expression,
+            })
+        await self.api("POST", "/api/actions", {"action": {"name": "表情序列", "sequence": {"steps": [
+            {"preset": "笑眼", "hold_ms": 350}, {"preset": "兴奋", "move_ms": 500},
+        ]}}})
+        await self.api("DELETE", "/api/actions", {"name": "笑眼", "expected_revision": "1"}, status=409)
+        session_id = await self.acquire(3000)
+
+        def expressions(state):
+            return [e["value"]["eyeExpression"] for e in state["devices"].get("events", [])
+                    if e["operation"] == "targets" and "eyeExpression" in e["value"]]
+
+        await self.api("POST", "/api/actions/run", {"session_id": session_id, "name": "表情序列"})
+        first = await self.state_until(lambda state: expressions(state) == ["HAPPY"])
+        self.assertEqual(first["action"], "表情序列")
+        await self.api("POST", "/api/actions", {
+            "expected_revision": "1",
+            "action": {"name": "兴奋", "preset": {"move_ms": 100, "targets": {"eye_expression": "NORMAL"}}},
+        })
+        await self.state_until(lambda state: expressions(state) == ["HAPPY", "EXCITED"])
+        await self.api("POST", "/api/actions/cancel", {"session_id": session_id})
+        await self.state_until(lambda state: not state["action"] and state["stopped"])
+
     async def test_actions_and_gateway_shutdown_release(self):
         action = {"name": "wave", "duration_ms": 1000,
                   "steps": [{"at_ms": 0, "targets": {"neck": {"yaw_rad": 0.1}}}]}

@@ -26,15 +26,15 @@ from google.protobuf import struct_pb2 as google_dot_protobuf_dot_struct__pb2
 from . import eyes_pb2 as eyes__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0brobot.proto\x12\x08robot.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\neyes.proto\"\x07\n\x05\x45mpty\"\x17\n\x03\x41\x63k\x12\x10\n\x08revision\x18\x01 \x01(\x04\"K\n\x0e\x43onfigSnapshot\x12\x10\n\x08revision\x18\x01 \x01(\x04\x12\'\n\x06\x63onfig\x18\x02 \x01(\x0b\x32\x17.google.protobuf.Struct\"R\n\x0c\x43onfigUpdate\x12\x19\n\x11\x65xpected_revision\x18\x01 \x01(\x04\x12\'\n\x06\x63onfig\x18\x02 \x01(\x0b\x32\x17.google.protobuf.Struct\"z\n\nEyesUpdate\x12\x19\n\x11\x65xpected_revision\x18\x01 \x01(\x04\x12)\n\x08settings\x18\x02 \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x0c\n\x04save\x18\x03 \x01(\x08\x12\x18\n\x10\x63onnect_tracking\x18\x04 \x01(\x08\"D\n\x0e\x41\x63quireRequest\x12\r\n\x05owner\x18\x01 \x01(\t\x12\x0e\n\x06ttl_ms\x18\x02 \x01(\r\x12\x13\n\x0b\x63lear_latch\x18\x03 \x01(\x08\"\x1d\n\x0cLeaseRequest\x12\r\n\x05token\x18\x01 \x01(\t\"5\n\x05Lease\x12\r\n\x05token\x18\x01 \x01(\t\x12\r\n\x05owner\x18\x02 \x01(\t\x12\x0e\n\x06ttl_ms\x18\x03 \x01(\r\"\x85\x01\n\rChassisTarget\x12#\n\x04mode\x18\x01 \x01(\x0e\x32\x15.robot.v1.ChassisMode\x12\x11\n\tspeed_m_s\x18\x02 \x01(\x01\x12\x16\n\x0eyaw_rate_rad_s\x18\x03 \x01(\x01\x12\x14\n\x0csteering_rad\x18\x04 \x01(\x01\x12\x0e\n\x06ttl_ms\x18\x05 \x01(\r\"T\n\nNeckTarget\x12\x14\n\x07yaw_rad\x18\x01 \x01(\x01H\x00\x88\x01\x01\x12\x16\n\tpitch_rad\x18\x02 \x01(\x01H\x01\x88\x01\x01\x42\n\n\x08_yaw_radB\x0c\n\n_pitch_rad\"3\n\tArmTarget\x12\x11\n\tjoint_rad\x18\x01 \x03(\x01\x12\x13\n\x0b\x64uration_ms\x18\x02 \x01(\r\"a\n\x0bServoTarget\x12\x11\n\tright_arm\x18\x01 \x01(\x08\x12\x13\n\x0bjoint_index\x18\x02 \x01(\r\x12\x14\n\x0cposition_pwm\x18\x03 \x01(\r\x12\x14\n\x0crestore_hold\x18\x04 \x01(\x08\"\x8f\x02\n\x07Targets\x12(\n\x07\x63hassis\x18\x01 \x01(\x0b\x32\x17.robot.v1.ChassisTarget\x12\"\n\x04neck\x18\x02 \x01(\x0b\x32\x14.robot.v1.NeckTarget\x12%\n\x08left_arm\x18\x03 \x01(\x0b\x32\x13.robot.v1.ArmTarget\x12&\n\tright_arm\x18\x04 \x01(\x0b\x32\x13.robot.v1.ArmTarget\x12\x1b\n\x04\x65yes\x18\x05 \x01(\x0b\x32\r.eyes.v1.Pose\x12$\n\x05\x62link\x18\x06 \x01(\x0b\x32\x15.eyes.v1.BlinkRequest\x12$\n\x05servo\x18\x07 \x01(\x0b\x32\x15.robot.v1.ServoTarget\"B\n\rTargetRequest\x12\r\n\x05token\x18\x01 \x01(\t\x12\"\n\x07targets\x18\x02 \x01(\x0b\x32\x11.robot.v1.Targets\"\x1c\n\x0bStopRequest\x12\r\n\x05latch\x18\x01 \x01(\x08\"*\n\x0bZeroRequest\x12\r\n\x05token\x18\x01 \x01(\t\x12\x0c\n\x04mask\x18\x02 \x01(\r\"#\n\x0cWatchRequest\x12\x13\n\x0binterval_ms\x18\x01 \x01(\r\"\xa7\x02\n\nRobotState\x12\x10\n\x08revision\x18\x01 \x01(\x04\x12\x17\n\x0f\x63onfig_revision\x18\x02 \x01(\x04\x12\x1f\n\x17\x61pplied_config_revision\x18\x03 \x01(\x04\x12\x11\n\tsimulated\x18\x04 \x01(\x08\x12\x0f\n\x07stopped\x18\x05 \x01(\x08\x12\x0f\n\x07latched\x18\x06 \x01(\x08\x12\r\n\x05owner\x18\x07 \x01(\t\x12\x1a\n\x12lease_remaining_ms\x18\x08 \x01(\r\x12\x0e\n\x06\x61\x63tion\x18\t \x01(\t\x12\r\n\x05\x66\x61ult\x18\n \x01(\t\x12(\n\x07\x64\x65vices\x18\x0b \x01(\x0b\x32\x17.google.protobuf.Struct\x12$\n\x05\x61udio\x18\x0c \x01(\x0b\x32\x15.robot.v1.AudioStatus\"?\n\nActionStep\x12\r\n\x05\x61t_ms\x18\x01 \x01(\r\x12\"\n\x07targets\x18\x02 \x01(\x0b\x32\x11.robot.v1.Targets\"P\n\x06\x41\x63tion\x12\x0c\n\x04name\x18\x01 \x01(\t\x12#\n\x05steps\x18\x02 \x03(\x0b\x32\x14.robot.v1.ActionStep\x12\x13\n\x0b\x64uration_ms\x18\x03 \x01(\r\"S\n\x0c\x41\x63tionRecord\x12\x10\n\x08revision\x18\x01 \x01(\x04\x12 \n\x06\x61\x63tion\x18\x02 \x01(\x0b\x32\x10.robot.v1.Action\x12\x0f\n\x07\x64\x65leted\x18\x03 \x01(\x08\"5\n\nActionList\x12\'\n\x07\x61\x63tions\x18\x01 \x03(\x0b\x32\x16.robot.v1.ActionRecord\"K\n\x0c\x41\x63tionUpdate\x12\x19\n\x11\x65xpected_revision\x18\x01 \x01(\x04\x12 \n\x06\x61\x63tion\x18\x02 \x01(\x0b\x32\x10.robot.v1.Action\"7\n\x0c\x41\x63tionDelete\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x19\n\x11\x65xpected_revision\x18\x02 \x01(\x04\")\n\nRunRequest\x12\r\n\x05token\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\"7\n\x0b\x41udioHeader\x12\x16\n\x0esample_rate_hz\x18\x01 \x01(\r\x12\x10\n\x08\x63hannels\x18\x02 \x01(\r\"P\n\x0b\x41udioPacket\x12\'\n\x06header\x18\x01 \x01(\x0b\x32\x15.robot.v1.AudioHeaderH\x00\x12\r\n\x03pcm\x18\x02 \x01(\x0cH\x00\x42\t\n\x07payload\"\xc1\x02\n\x0b\x41udioStatus\x12\x11\n\tstream_id\x18\x01 \x01(\t\x12\r\n\x05phase\x18\x02 \x01(\t\x12\x11\n\tsimulated\x18\x03 \x01(\x08\x12\x16\n\x0esample_rate_hz\x18\x04 \x01(\r\x12\x10\n\x08\x63hannels\x18\x05 \x01(\r\x12\x13\n\x0b\x62uffered_ms\x18\x06 \x01(\x01\x12\x18\n\x10peak_buffered_ms\x18\x07 \x01(\x01\x12\x17\n\x0freceived_frames\x18\x08 \x01(\x04\x12\x18\n\x10submitted_frames\x18\t \x01(\x04\x12\x16\n\x0esilence_frames\x18\n \x01(\x04\x12\x16\n\x0erebuffer_count\x18\x0b \x01(\x04\x12\x18\n\x10start_latency_ms\x18\x0c \x01(\x01\x12\x18\n\x10\x64\x65vice_buffer_ms\x18\r \x01(\x01\x12\r\n\x05\x65rror\x18\x0e \x01(\t*:\n\x0b\x43hassisMode\x12\r\n\tACKERMANN\x10\x00\x12\x08\n\x04\x43RAB\x10\x01\x12\x08\n\x04SPIN\x10\x02\x12\x08\n\x04PARK\x10\x03\x32\xf5\x08\n\x0cRobotControl\x12\x36\n\tGetConfig\x12\x0f.robot.v1.Empty\x1a\x18.robot.v1.ConfigSnapshot\x12@\n\x0cUpdateConfig\x12\x16.robot.v1.ConfigUpdate\x1a\x18.robot.v1.ConfigSnapshot\x12<\n\nUpdateEyes\x12\x14.robot.v1.EyesUpdate\x1a\x18.robot.v1.ConfigSnapshot\x12\x31\n\x08GetState\x12\x0f.robot.v1.Empty\x1a\x14.robot.v1.RobotState\x12<\n\nWatchState\x12\x16.robot.v1.WatchRequest\x1a\x14.robot.v1.RobotState0\x01\x12;\n\x0e\x41\x63quireControl\x12\x18.robot.v1.AcquireRequest\x1a\x0f.robot.v1.Lease\x12\x37\n\x0cRenewControl\x12\x16.robot.v1.LeaseRequest\x1a\x0f.robot.v1.Lease\x12\x37\n\x0eReleaseControl\x12\x16.robot.v1.LeaseRequest\x1a\r.robot.v1.Ack\x12\x34\n\nSetTargets\x12\x17.robot.v1.TargetRequest\x1a\r.robot.v1.Ack\x12\x39\n\rStreamTargets\x12\x17.robot.v1.TargetRequest\x1a\r.robot.v1.Ack(\x01\x12,\n\x04Stop\x12\x15.robot.v1.StopRequest\x1a\r.robot.v1.Ack\x12\x30\n\x08ZeroNeck\x12\x15.robot.v1.ZeroRequest\x1a\r.robot.v1.Ack\x12\x34\n\x0bListActions\x12\x0f.robot.v1.Empty\x1a\x14.robot.v1.ActionList\x12;\n\tPutAction\x12\x16.robot.v1.ActionUpdate\x1a\x16.robot.v1.ActionRecord\x12\x35\n\x0c\x44\x65leteAction\x12\x16.robot.v1.ActionDelete\x1a\r.robot.v1.Ack\x12\x30\n\tRunAction\x12\x14.robot.v1.RunRequest\x1a\r.robot.v1.Ack\x12\x35\n\x0c\x43\x61ncelAction\x12\x16.robot.v1.LeaseRequest\x1a\r.robot.v1.Ack\x12;\n\tPlayAudio\x12\x15.robot.v1.AudioPacket\x1a\x15.robot.v1.AudioStatus(\x01\x12\x37\n\rGetAudioState\x12\x0f.robot.v1.Empty\x1a\x15.robot.v1.AudioStatus\x12\x33\n\tStopAudio\x12\x0f.robot.v1.Empty\x1a\x15.robot.v1.AudioStatusb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0brobot.proto\x12\x08robot.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\neyes.proto\"\x07\n\x05\x45mpty\"\x17\n\x03\x41\x63k\x12\x10\n\x08revision\x18\x01 \x01(\x04\"K\n\x0e\x43onfigSnapshot\x12\x10\n\x08revision\x18\x01 \x01(\x04\x12\'\n\x06\x63onfig\x18\x02 \x01(\x0b\x32\x17.google.protobuf.Struct\"R\n\x0c\x43onfigUpdate\x12\x19\n\x11\x65xpected_revision\x18\x01 \x01(\x04\x12\'\n\x06\x63onfig\x18\x02 \x01(\x0b\x32\x17.google.protobuf.Struct\"z\n\nEyesUpdate\x12\x19\n\x11\x65xpected_revision\x18\x01 \x01(\x04\x12)\n\x08settings\x18\x02 \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x0c\n\x04save\x18\x03 \x01(\x08\x12\x18\n\x10\x63onnect_tracking\x18\x04 \x01(\x08\"D\n\x0e\x41\x63quireRequest\x12\r\n\x05owner\x18\x01 \x01(\t\x12\x0e\n\x06ttl_ms\x18\x02 \x01(\r\x12\x13\n\x0b\x63lear_latch\x18\x03 \x01(\x08\"\x1d\n\x0cLeaseRequest\x12\r\n\x05token\x18\x01 \x01(\t\"5\n\x05Lease\x12\r\n\x05token\x18\x01 \x01(\t\x12\r\n\x05owner\x18\x02 \x01(\t\x12\x0e\n\x06ttl_ms\x18\x03 \x01(\r\"\x85\x01\n\rChassisTarget\x12#\n\x04mode\x18\x01 \x01(\x0e\x32\x15.robot.v1.ChassisMode\x12\x11\n\tspeed_m_s\x18\x02 \x01(\x01\x12\x16\n\x0eyaw_rate_rad_s\x18\x03 \x01(\x01\x12\x14\n\x0csteering_rad\x18\x04 \x01(\x01\x12\x0e\n\x06ttl_ms\x18\x05 \x01(\r\"T\n\nNeckTarget\x12\x14\n\x07yaw_rad\x18\x01 \x01(\x01H\x00\x88\x01\x01\x12\x16\n\tpitch_rad\x18\x02 \x01(\x01H\x01\x88\x01\x01\x42\n\n\x08_yaw_radB\x0c\n\n_pitch_rad\"3\n\tArmTarget\x12\x11\n\tjoint_rad\x18\x01 \x03(\x01\x12\x13\n\x0b\x64uration_ms\x18\x02 \x01(\r\"a\n\x0bServoTarget\x12\x11\n\tright_arm\x18\x01 \x01(\x08\x12\x13\n\x0bjoint_index\x18\x02 \x01(\r\x12\x14\n\x0cposition_pwm\x18\x03 \x01(\r\x12\x14\n\x0crestore_hold\x18\x04 \x01(\x08\"\xd4\x02\n\x07Targets\x12(\n\x07\x63hassis\x18\x01 \x01(\x0b\x32\x17.robot.v1.ChassisTarget\x12\"\n\x04neck\x18\x02 \x01(\x0b\x32\x14.robot.v1.NeckTarget\x12%\n\x08left_arm\x18\x03 \x01(\x0b\x32\x13.robot.v1.ArmTarget\x12&\n\tright_arm\x18\x04 \x01(\x0b\x32\x13.robot.v1.ArmTarget\x12\x1b\n\x04\x65yes\x18\x05 \x01(\x0b\x32\r.eyes.v1.Pose\x12$\n\x05\x62link\x18\x06 \x01(\x0b\x32\x15.eyes.v1.BlinkRequest\x12$\n\x05servo\x18\x07 \x01(\x0b\x32\x15.robot.v1.ServoTarget\x12\x30\n\x0e\x65ye_expression\x18\x08 \x01(\x0e\x32\x13.eyes.v1.ExpressionH\x00\x88\x01\x01\x42\x11\n\x0f_eye_expression\"B\n\rTargetRequest\x12\r\n\x05token\x18\x01 \x01(\t\x12\"\n\x07targets\x18\x02 \x01(\x0b\x32\x11.robot.v1.Targets\"\x1c\n\x0bStopRequest\x12\r\n\x05latch\x18\x01 \x01(\x08\"*\n\x0bZeroRequest\x12\r\n\x05token\x18\x01 \x01(\t\x12\x0c\n\x04mask\x18\x02 \x01(\r\"#\n\x0cWatchRequest\x12\x13\n\x0binterval_ms\x18\x01 \x01(\r\"\xa7\x02\n\nRobotState\x12\x10\n\x08revision\x18\x01 \x01(\x04\x12\x17\n\x0f\x63onfig_revision\x18\x02 \x01(\x04\x12\x1f\n\x17\x61pplied_config_revision\x18\x03 \x01(\x04\x12\x11\n\tsimulated\x18\x04 \x01(\x08\x12\x0f\n\x07stopped\x18\x05 \x01(\x08\x12\x0f\n\x07latched\x18\x06 \x01(\x08\x12\r\n\x05owner\x18\x07 \x01(\t\x12\x1a\n\x12lease_remaining_ms\x18\x08 \x01(\r\x12\x0e\n\x06\x61\x63tion\x18\t \x01(\t\x12\r\n\x05\x66\x61ult\x18\n \x01(\t\x12(\n\x07\x64\x65vices\x18\x0b \x01(\x0b\x32\x17.google.protobuf.Struct\x12$\n\x05\x61udio\x18\x0c \x01(\x0b\x32\x15.robot.v1.AudioStatus\"?\n\nActionStep\x12\r\n\x05\x61t_ms\x18\x01 \x01(\r\x12\"\n\x07targets\x18\x02 \x01(\x0b\x32\x11.robot.v1.Targets\"\xb6\x01\n\x06\x41\x63tion\x12\x0c\n\x04name\x18\x01 \x01(\t\x12#\n\x05steps\x18\x02 \x03(\x0b\x32\x14.robot.v1.ActionStep\x12\x13\n\x0b\x64uration_ms\x18\x03 \x01(\r\x12(\n\x06preset\x18\x04 \x01(\x0b\x32\x16.robot.v1.ActionPresetH\x00\x12,\n\x08sequence\x18\x05 \x01(\x0b\x32\x18.robot.v1.ActionSequenceH\x00\x42\x0c\n\ndefinition\"C\n\x0c\x41\x63tionPreset\x12\"\n\x07targets\x18\x01 \x01(\x0b\x32\x11.robot.v1.Targets\x12\x0f\n\x07move_ms\x18\x02 \x01(\r\"5\n\x0e\x41\x63tionSequence\x12#\n\x05steps\x18\x01 \x03(\x0b\x32\x14.robot.v1.PresetStep\"O\n\nPresetStep\x12\x0e\n\x06preset\x18\x01 \x01(\t\x12\x14\n\x07move_ms\x18\x02 \x01(\rH\x00\x88\x01\x01\x12\x0f\n\x07hold_ms\x18\x03 \x01(\rB\n\n\x08_move_ms\"\xc1\x01\n\rPresetCapture\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x19\n\x11\x65xpected_revision\x18\x02 \x01(\x04\x12\x10\n\x08left_arm\x18\x03 \x01(\x08\x12\x11\n\tright_arm\x18\x04 \x01(\x08\x12\x0c\n\x04neck\x18\x05 \x01(\x08\x12\x30\n\x0e\x65ye_expression\x18\x06 \x01(\x0e\x32\x13.eyes.v1.ExpressionH\x00\x88\x01\x01\x12\x0f\n\x07move_ms\x18\x07 \x01(\rB\x11\n\x0f_eye_expression\"S\n\x0c\x41\x63tionRecord\x12\x10\n\x08revision\x18\x01 \x01(\x04\x12 \n\x06\x61\x63tion\x18\x02 \x01(\x0b\x32\x10.robot.v1.Action\x12\x0f\n\x07\x64\x65leted\x18\x03 \x01(\x08\"5\n\nActionList\x12\'\n\x07\x61\x63tions\x18\x01 \x03(\x0b\x32\x16.robot.v1.ActionRecord\"K\n\x0c\x41\x63tionUpdate\x12\x19\n\x11\x65xpected_revision\x18\x01 \x01(\x04\x12 \n\x06\x61\x63tion\x18\x02 \x01(\x0b\x32\x10.robot.v1.Action\"7\n\x0c\x41\x63tionDelete\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x19\n\x11\x65xpected_revision\x18\x02 \x01(\x04\")\n\nRunRequest\x12\r\n\x05token\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\"7\n\x0b\x41udioHeader\x12\x16\n\x0esample_rate_hz\x18\x01 \x01(\r\x12\x10\n\x08\x63hannels\x18\x02 \x01(\r\"P\n\x0b\x41udioPacket\x12\'\n\x06header\x18\x01 \x01(\x0b\x32\x15.robot.v1.AudioHeaderH\x00\x12\r\n\x03pcm\x18\x02 \x01(\x0cH\x00\x42\t\n\x07payload\"\xc1\x02\n\x0b\x41udioStatus\x12\x11\n\tstream_id\x18\x01 \x01(\t\x12\r\n\x05phase\x18\x02 \x01(\t\x12\x11\n\tsimulated\x18\x03 \x01(\x08\x12\x16\n\x0esample_rate_hz\x18\x04 \x01(\r\x12\x10\n\x08\x63hannels\x18\x05 \x01(\r\x12\x13\n\x0b\x62uffered_ms\x18\x06 \x01(\x01\x12\x18\n\x10peak_buffered_ms\x18\x07 \x01(\x01\x12\x17\n\x0freceived_frames\x18\x08 \x01(\x04\x12\x18\n\x10submitted_frames\x18\t \x01(\x04\x12\x16\n\x0esilence_frames\x18\n \x01(\x04\x12\x16\n\x0erebuffer_count\x18\x0b \x01(\x04\x12\x18\n\x10start_latency_ms\x18\x0c \x01(\x01\x12\x18\n\x10\x64\x65vice_buffer_ms\x18\r \x01(\x01\x12\r\n\x05\x65rror\x18\x0e \x01(\t*:\n\x0b\x43hassisMode\x12\r\n\tACKERMANN\x10\x00\x12\x08\n\x04\x43RAB\x10\x01\x12\x08\n\x04SPIN\x10\x02\x12\x08\n\x04PARK\x10\x03\x32\xb7\t\n\x0cRobotControl\x12\x36\n\tGetConfig\x12\x0f.robot.v1.Empty\x1a\x18.robot.v1.ConfigSnapshot\x12@\n\x0cUpdateConfig\x12\x16.robot.v1.ConfigUpdate\x1a\x18.robot.v1.ConfigSnapshot\x12<\n\nUpdateEyes\x12\x14.robot.v1.EyesUpdate\x1a\x18.robot.v1.ConfigSnapshot\x12\x31\n\x08GetState\x12\x0f.robot.v1.Empty\x1a\x14.robot.v1.RobotState\x12<\n\nWatchState\x12\x16.robot.v1.WatchRequest\x1a\x14.robot.v1.RobotState0\x01\x12;\n\x0e\x41\x63quireControl\x12\x18.robot.v1.AcquireRequest\x1a\x0f.robot.v1.Lease\x12\x37\n\x0cRenewControl\x12\x16.robot.v1.LeaseRequest\x1a\x0f.robot.v1.Lease\x12\x37\n\x0eReleaseControl\x12\x16.robot.v1.LeaseRequest\x1a\r.robot.v1.Ack\x12\x34\n\nSetTargets\x12\x17.robot.v1.TargetRequest\x1a\r.robot.v1.Ack\x12\x39\n\rStreamTargets\x12\x17.robot.v1.TargetRequest\x1a\r.robot.v1.Ack(\x01\x12,\n\x04Stop\x12\x15.robot.v1.StopRequest\x1a\r.robot.v1.Ack\x12\x30\n\x08ZeroNeck\x12\x15.robot.v1.ZeroRequest\x1a\r.robot.v1.Ack\x12\x34\n\x0bListActions\x12\x0f.robot.v1.Empty\x1a\x14.robot.v1.ActionList\x12;\n\tPutAction\x12\x16.robot.v1.ActionUpdate\x1a\x16.robot.v1.ActionRecord\x12@\n\rCapturePreset\x12\x17.robot.v1.PresetCapture\x1a\x16.robot.v1.ActionRecord\x12\x35\n\x0c\x44\x65leteAction\x12\x16.robot.v1.ActionDelete\x1a\r.robot.v1.Ack\x12\x30\n\tRunAction\x12\x14.robot.v1.RunRequest\x1a\r.robot.v1.Ack\x12\x35\n\x0c\x43\x61ncelAction\x12\x16.robot.v1.LeaseRequest\x1a\r.robot.v1.Ack\x12;\n\tPlayAudio\x12\x15.robot.v1.AudioPacket\x1a\x15.robot.v1.AudioStatus(\x01\x12\x37\n\rGetAudioState\x12\x0f.robot.v1.Empty\x1a\x15.robot.v1.AudioStatus\x12\x33\n\tStopAudio\x12\x0f.robot.v1.Empty\x1a\x15.robot.v1.AudioStatusb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'robot_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_CHASSISMODE']._serialized_start=2594
-  _globals['_CHASSISMODE']._serialized_end=2652
+  _globals['_CHASSISMODE']._serialized_start=3167
+  _globals['_CHASSISMODE']._serialized_end=3225
   _globals['_EMPTY']._serialized_start=67
   _globals['_EMPTY']._serialized_end=74
   _globals['_ACK']._serialized_start=76
@@ -60,37 +60,45 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_SERVOTARGET']._serialized_start=817
   _globals['_SERVOTARGET']._serialized_end=914
   _globals['_TARGETS']._serialized_start=917
-  _globals['_TARGETS']._serialized_end=1188
-  _globals['_TARGETREQUEST']._serialized_start=1190
-  _globals['_TARGETREQUEST']._serialized_end=1256
-  _globals['_STOPREQUEST']._serialized_start=1258
-  _globals['_STOPREQUEST']._serialized_end=1286
-  _globals['_ZEROREQUEST']._serialized_start=1288
-  _globals['_ZEROREQUEST']._serialized_end=1330
-  _globals['_WATCHREQUEST']._serialized_start=1332
-  _globals['_WATCHREQUEST']._serialized_end=1367
-  _globals['_ROBOTSTATE']._serialized_start=1370
-  _globals['_ROBOTSTATE']._serialized_end=1665
-  _globals['_ACTIONSTEP']._serialized_start=1667
-  _globals['_ACTIONSTEP']._serialized_end=1730
-  _globals['_ACTION']._serialized_start=1732
-  _globals['_ACTION']._serialized_end=1812
-  _globals['_ACTIONRECORD']._serialized_start=1814
-  _globals['_ACTIONRECORD']._serialized_end=1897
-  _globals['_ACTIONLIST']._serialized_start=1899
-  _globals['_ACTIONLIST']._serialized_end=1952
-  _globals['_ACTIONUPDATE']._serialized_start=1954
-  _globals['_ACTIONUPDATE']._serialized_end=2029
-  _globals['_ACTIONDELETE']._serialized_start=2031
-  _globals['_ACTIONDELETE']._serialized_end=2086
-  _globals['_RUNREQUEST']._serialized_start=2088
-  _globals['_RUNREQUEST']._serialized_end=2129
-  _globals['_AUDIOHEADER']._serialized_start=2131
-  _globals['_AUDIOHEADER']._serialized_end=2186
-  _globals['_AUDIOPACKET']._serialized_start=2188
-  _globals['_AUDIOPACKET']._serialized_end=2268
-  _globals['_AUDIOSTATUS']._serialized_start=2271
-  _globals['_AUDIOSTATUS']._serialized_end=2592
-  _globals['_ROBOTCONTROL']._serialized_start=2655
-  _globals['_ROBOTCONTROL']._serialized_end=3796
+  _globals['_TARGETS']._serialized_end=1257
+  _globals['_TARGETREQUEST']._serialized_start=1259
+  _globals['_TARGETREQUEST']._serialized_end=1325
+  _globals['_STOPREQUEST']._serialized_start=1327
+  _globals['_STOPREQUEST']._serialized_end=1355
+  _globals['_ZEROREQUEST']._serialized_start=1357
+  _globals['_ZEROREQUEST']._serialized_end=1399
+  _globals['_WATCHREQUEST']._serialized_start=1401
+  _globals['_WATCHREQUEST']._serialized_end=1436
+  _globals['_ROBOTSTATE']._serialized_start=1439
+  _globals['_ROBOTSTATE']._serialized_end=1734
+  _globals['_ACTIONSTEP']._serialized_start=1736
+  _globals['_ACTIONSTEP']._serialized_end=1799
+  _globals['_ACTION']._serialized_start=1802
+  _globals['_ACTION']._serialized_end=1984
+  _globals['_ACTIONPRESET']._serialized_start=1986
+  _globals['_ACTIONPRESET']._serialized_end=2053
+  _globals['_ACTIONSEQUENCE']._serialized_start=2055
+  _globals['_ACTIONSEQUENCE']._serialized_end=2108
+  _globals['_PRESETSTEP']._serialized_start=2110
+  _globals['_PRESETSTEP']._serialized_end=2189
+  _globals['_PRESETCAPTURE']._serialized_start=2192
+  _globals['_PRESETCAPTURE']._serialized_end=2385
+  _globals['_ACTIONRECORD']._serialized_start=2387
+  _globals['_ACTIONRECORD']._serialized_end=2470
+  _globals['_ACTIONLIST']._serialized_start=2472
+  _globals['_ACTIONLIST']._serialized_end=2525
+  _globals['_ACTIONUPDATE']._serialized_start=2527
+  _globals['_ACTIONUPDATE']._serialized_end=2602
+  _globals['_ACTIONDELETE']._serialized_start=2604
+  _globals['_ACTIONDELETE']._serialized_end=2659
+  _globals['_RUNREQUEST']._serialized_start=2661
+  _globals['_RUNREQUEST']._serialized_end=2702
+  _globals['_AUDIOHEADER']._serialized_start=2704
+  _globals['_AUDIOHEADER']._serialized_end=2759
+  _globals['_AUDIOPACKET']._serialized_start=2761
+  _globals['_AUDIOPACKET']._serialized_end=2841
+  _globals['_AUDIOSTATUS']._serialized_start=2844
+  _globals['_AUDIOSTATUS']._serialized_end=3165
+  _globals['_ROBOTCONTROL']._serialized_start=3228
+  _globals['_ROBOTCONTROL']._serialized_end=4435
 # @@protoc_insertion_point(module_scope)

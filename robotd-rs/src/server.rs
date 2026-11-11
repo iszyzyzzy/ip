@@ -179,6 +179,16 @@ impl RobotControl for Service {
             Action
         )
     }
+    async fn capture_preset(
+        &self,
+        r: Request<pb::PresetCapture>,
+    ) -> Result<Response<pb::ActionRecord>, Status> {
+        self.auth(&r)?;
+        reply!(
+            self.hub.request(Op::Capture(r.into_inner()), false).await?,
+            Action
+        )
+    }
     async fn delete_action(
         &self,
         r: Request<pb::ActionDelete>,

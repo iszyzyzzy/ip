@@ -105,6 +105,11 @@ class RobotControlStub:
                 request_serializer=robot__pb2.ActionUpdate.SerializeToString,
                 response_deserializer=robot__pb2.ActionRecord.FromString,
                 _registered_method=True)
+        self.CapturePreset = channel.unary_unary(
+                '/robot.v1.RobotControl/CapturePreset',
+                request_serializer=robot__pb2.PresetCapture.SerializeToString,
+                response_deserializer=robot__pb2.ActionRecord.FromString,
+                _registered_method=True)
         self.DeleteAction = channel.unary_unary(
                 '/robot.v1.RobotControl/DeleteAction',
                 request_serializer=robot__pb2.ActionDelete.SerializeToString,
@@ -227,6 +232,12 @@ class RobotControlServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def CapturePreset(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def DeleteAction(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -335,6 +346,11 @@ def add_RobotControlServicer_to_server(servicer, server):
             'PutAction': grpc.unary_unary_rpc_method_handler(
                     servicer.PutAction,
                     request_deserializer=robot__pb2.ActionUpdate.FromString,
+                    response_serializer=robot__pb2.ActionRecord.SerializeToString,
+            ),
+            'CapturePreset': grpc.unary_unary_rpc_method_handler(
+                    servicer.CapturePreset,
+                    request_deserializer=robot__pb2.PresetCapture.FromString,
                     response_serializer=robot__pb2.ActionRecord.SerializeToString,
             ),
             'DeleteAction': grpc.unary_unary_rpc_method_handler(
@@ -746,6 +762,33 @@ class RobotControl:
             target,
             '/robot.v1.RobotControl/PutAction',
             robot__pb2.ActionUpdate.SerializeToString,
+            robot__pb2.ActionRecord.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CapturePreset(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/robot.v1.RobotControl/CapturePreset',
+            robot__pb2.PresetCapture.SerializeToString,
             robot__pb2.ActionRecord.FromString,
             options,
             channel_credentials,

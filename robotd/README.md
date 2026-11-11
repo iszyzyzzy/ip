@@ -142,7 +142,8 @@ robotctl zero-neck --mask 3
 | SetTargets / StreamTargets | 单次/客户端流目标，支持多个设备组合 |
 | Stop / ZeroNeck | 全部停止、停止锁定及颈部运行时归零 |
 | ListActions / PutAction / DeleteAction | 版本化动作存储 |
-| RunAction / CancelAction | 时间点动作执行与取消 |
+| CapturePreset | 从设备回读姿态，保存为动作预设 |
+| RunAction / CancelAction | 执行与取消预设、序列或时间点动作 |
 | PlayAudio / GetAudioState / StopAudio | PCM16 音频流、缓冲/播放状态和停止 |
 
 取得控制权后带返回的 token 下发目标，租约 200..5000 ms，必须显式续期。控制权到期/释放会停止底盘、颈部和双臂并取消动作。`Stop` 不需要租约，可抢占排队请求；它撤销旧 token。`latch=true` 后，新的 Acquire 必须显式 `clear_latch=true`。停止状态表示中枢已清除运动目标并请求设备停止，实际执行结果查看故障与设备反馈。
@@ -159,7 +160,11 @@ TAS5756M 已预配置，robotd 直接打开系统 ALSA 声卡，不操作驱动�
 
 ## 动作开发
 
-动作是 `name + duration_ms + steps`；每个 `step.at_ms` 指定发送目标的相对时间。时间点严格递增，最长 10 分钟/1000 点。H7 负责颈部闭环，舵机自行执行 `duration_ms` 轨迹，robotd 不额外实现 IK。可用上层规划器生成关节时间点。
+动作预设（`Action.preset`）保存关节角度、可选眼屏表情和默认运动时间 `move_ms`。用 `CapturePreset` 可直接保存当前回读的姿态；它只采集选中的部件，回读失效时拒绝保存。机械臂姿态以弧度存储，执行时按当前标定换算为设备指令。
+
+动作序列（`Action.sequence`）只引用预设，不嵌套其他序列。每一步可以覆盖预设的 `move_ms`，并在运动时间后等待 `hold_ms`；计时从目标发送完成开始。启动时展开为执行快照，随后编辑预设只影响下次执行。仍被序列引用的预设不能删除。表情在发送该步目标时切换，保持到下一次显式切换。
+
+当前舵机接收带时长的位置指令，颈部由 H7 自己闭环。序列按时间推进，不等待到位反馈。预设存储的是目标和时长，可在驱动侧更换轨迹生成方式。原有 `name + duration_ms + steps` 仍用于上层规划器直接指定时间点；每个 `step.at_ms` 为严格递增的相对时间。动作最长 10 分钟、最多 1000 步。
 
 动作保存和更新检查自身 revision；新动作 expected_revision=0，更新使用 ListActions 返回值。删除也保留版本号，ListActions 中标为 `deleted=true`，重建同名动作使用该版本，避免旧客户端覆盖新动作。运行中拒绝修改/删除同名动作和直接 SetTargets，需先取消。开始动作会停止已有运动目标；正常完成、取消、失去租约都停止运动设备，独立语音流继续。调度时间点迟到超过 250 ms 会中止，避免跳过时间点后突然执行旧动作。
 

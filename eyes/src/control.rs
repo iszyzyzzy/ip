@@ -19,6 +19,7 @@ pub mod pb {
 
 pub enum Command {
     Pose(pb::Pose),
+    Expression(pb::Expression),
     Configure(Box<pb::Config>),
     Blink,
     ReloadAssets,
@@ -99,6 +100,14 @@ impl pb::eye_control_server::EyeControl for Service {
         let config = request.into_inner();
         validate_config(&config)?;
         self.apply(Command::Configure(Box::new(config))).await
+    }
+    async fn set_expression(
+        &self,
+        r: Request<pb::ExpressionRequest>,
+    ) -> Result<Response<pb::Ack>, Status> {
+        let expression = pb::Expression::try_from(r.into_inner().expression)
+            .map_err(|_| Status::invalid_argument("未知眼屏表情"))?;
+        self.apply(Command::Expression(expression)).await
     }
     async fn blink(&self, _: Request<pb::Empty>) -> Result<Response<pb::Ack>, Status> {
         self.apply(Command::Blink).await

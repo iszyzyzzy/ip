@@ -161,6 +161,7 @@ cargo run --release -- --socket D:\code\ip\eyes\control.sock
 | `Configure(Config)` | 部分更新全部运行时参数，包括模拟目标、眼动、果冻、图层、眼型、眨眼、动捕端口/IP和窗口 |
 | `Blink(Empty)` | 触发一次眨眼 |
 | `TriggerBlink(BlinkRequest)` | 左右眼独立选择、可指定本次眨眼时长 |
+| `SetExpression(ExpressionRequest)` | 切换普通、笑眼或兴奋表情，不改变当前注视或面捕模式 |
 | `SaveSettings(Empty)` | 保存全部当前运行配置到启动时指定的 settings 文件 |
 | `ConnectTracking(Empty)` | 使用当前 phone_ip 向 iFacialMocap 发送启动请求 |
 | `ReloadAssets(Empty)` | 重新加载当前素材包；失败返回 FAILED_PRECONDITION，保留旧素材 |

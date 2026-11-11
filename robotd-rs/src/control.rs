@@ -29,6 +29,7 @@ pub enum Op {
     Zero(pb::ZeroRequest),
     Actions,
     Put(pb::ActionUpdate),
+    Capture(pb::PresetCapture),
     Delete(pb::ActionDelete),
     Run(pb::RunRequest),
     Cancel(pb::LeaseRequest),
@@ -146,6 +147,13 @@ impl Hub {
     }
 }
 
+struct ActiveAction {
+    plan: pb::Action,
+    start: Instant,
+    next: usize,
+    relative: bool,
+}
+
 struct Engine {
     store: Store,
     cfg: Config,
@@ -159,7 +167,7 @@ struct Engine {
     audio: Player,
     lease: Option<pb::Lease>,
     lease_end: Instant,
-    action: Option<(pb::Action, Instant, usize)>,
+    action: Option<ActiveAction>,
     chassis: Option<pb::ChassisTarget>,
     chassis_end: Instant,
     next_chassis: Instant,
@@ -243,7 +251,7 @@ impl Engine {
             action: self
                 .action
                 .as_ref()
-                .map(|x| x.0.name.clone())
+                .map(|x| x.plan.name.clone())
                 .unwrap_or_default(),
             fault: self.fault.clone(),
             devices: Some(crate::to_struct(
@@ -326,6 +334,47 @@ impl Engine {
             config: Some(crate::to_struct(&self.cfg.value())),
         })
     }
+    fn compile_action(&self, a: &pb::Action, cfg: &Config) -> Result<pb::Action, Status> {
+        crate::actions::compile(a, cfg, |name| Ok(self.store.action(name)?)).map_err(invalid)
+    }
+
+    fn put_action(&mut self, action: pb::Action, expected: u64) -> Result<Reply, Status> {
+        self.compile_action(&action, &self.cfg)?;
+        if self
+            .action
+            .as_ref()
+            .is_some_and(|x| x.plan.name == action.name)
+        {
+            return Err(Status::failed_precondition("动作执行中，不能修改"));
+        }
+        if !matches!(action.definition, Some(pb::action::Definition::Preset(_))) {
+            self.ensure_unreferenced(&action.name)?;
+        }
+        let revision = self.store.put(&action, expected)?;
+        Ok(Reply::Action(pb::ActionRecord {
+            revision,
+            action: Some(action),
+            deleted: false,
+        }))
+    }
+
+    fn ensure_unreferenced(&self, name: &str) -> Result<(), Status> {
+        for record in self.store.actions()?.actions {
+            let Some(action) = record.action else {
+                continue;
+            };
+            if let Some(pb::action::Definition::Sequence(sequence)) = action.definition
+                && sequence.steps.iter().any(|step| step.preset == name)
+            {
+                return Err(Status::failed_precondition(format!(
+                    "预设仍被序列 {} 使用",
+                    action.name
+                )));
+            }
+        }
+        Ok(())
+    }
+
     fn process(&mut self, op: Op) -> Result<Reply, Status> {
         match op {
             Op::Config => Ok(self.config()),
@@ -341,7 +390,7 @@ impl Engine {
                     .into_iter()
                     .filter(|a| !a.deleted)
                 {
-                    validation::action(a.action.as_ref().unwrap(), &cfg).map_err(invalid)?;
+                    self.compile_action(a.action.as_ref().unwrap(), &cfg)?;
                 }
                 self.stop_motion(true);
                 self.audio.stop();
@@ -447,23 +496,29 @@ impl Engine {
                 Ok(self.ack())
             }
             Op::Actions => Ok(Reply::Actions(self.store.actions()?)),
-            Op::Put(r) => {
-                let a = r.action.ok_or_else(|| invalid("缺少 action"))?;
-                validation::action(&a, &self.cfg).map_err(invalid)?;
-                if self.action.as_ref().is_some_and(|x| x.0.name == a.name) {
-                    return Err(Status::failed_precondition("动作执行中，不能修改"));
-                }
-                let rev = self.store.put(&a, r.expected_revision)?;
-                Ok(Reply::Action(pb::ActionRecord {
-                    revision: rev,
-                    action: Some(a),
-                    deleted: false,
-                }))
+            Op::Put(r) => self.put_action(
+                r.action.ok_or_else(|| invalid("缺少 action"))?,
+                r.expected_revision,
+            ),
+            Op::Capture(r) => {
+                let state = self
+                    .devices
+                    .as_ref()
+                    .ok_or_else(|| Status::unavailable("设备未连接"))?
+                    .snapshot();
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(invalid)?
+                    .as_secs_f64();
+                let action = crate::actions::capture(&r, &state, now)
+                    .map_err(|e| Status::failed_precondition(e.to_string()))?;
+                self.put_action(action, r.expected_revision)
             }
             Op::Delete(r) => {
-                if self.action.as_ref().is_some_and(|x| x.0.name == r.name) {
+                if self.action.as_ref().is_some_and(|x| x.plan.name == r.name) {
                     return Err(Status::failed_precondition("动作执行中，不能删除"));
                 }
+                self.ensure_unreferenced(&r.name)?;
                 let rev = self.store.delete(&r.name, r.expected_revision)?;
                 Ok(Reply::Ack(pb::Ack { revision: rev }))
             }
@@ -472,13 +527,18 @@ impl Engine {
                 if self.action.is_some() {
                     return Err(Status::failed_precondition("已有动作执行中"));
                 }
-                let a = self.store.action(&r.name)?;
-                validation::action(&a, &self.cfg).map_err(invalid)?;
+                let action = self.store.action(&r.name)?;
+                let plan = self.compile_action(&action, &self.cfg)?;
                 self.stop_motion(false);
                 if !self.fault.is_empty() {
                     return Err(Status::unavailable(self.fault.clone()));
                 }
-                self.action = Some((a, Instant::now(), 0));
+                self.action = Some(ActiveAction {
+                    plan,
+                    start: Instant::now(),
+                    next: 0,
+                    relative: action.definition.is_some(),
+                });
                 Ok(self.ack())
             }
             Op::Cancel(r) => {
@@ -507,24 +567,32 @@ impl Engine {
         if !self.fault.is_empty() {
             return;
         }
-        if let Some((a, start, i)) = &mut self.action {
-            let elapsed = start.elapsed().as_millis();
-            if elapsed >= a.duration_ms as u128 {
-                self.stop_motion(false);
-            } else if let Some(step) = a
+        if let Some(active) = &mut self.action {
+            let elapsed = active.start.elapsed().as_millis();
+            let finished = elapsed >= active.plan.duration_ms as u128;
+            if let Some(step) = active
+                .plan
                 .steps
-                .get(*i)
-                .filter(|s| elapsed >= s.at_ms as u128)
+                .get(active.next)
+                .filter(|s| elapsed >= s.at_ms as u128 && (active.relative || !finished))
                 .cloned()
             {
                 if elapsed - step.at_ms as u128 > 250 {
                     let _ = self.io_result(Err(anyhow::anyhow!("动作调度延迟超过 250 ms")));
                     return;
                 }
-                *i += 1;
+                active.next += 1;
+                let relative = active.relative;
                 if self.apply(step.targets.as_ref().unwrap()).is_err() {
                     return;
                 }
+                if relative {
+                    // 按实际下发完成时间留足运动与停留，避免多设备串行发送吞掉时长。
+                    self.action.as_mut().unwrap().start =
+                        Instant::now() - Duration::from_millis(step.at_ms as u64);
+                }
+            } else if finished {
+                self.stop_motion(false);
             }
         }
         if let Some(c) = self.chassis {

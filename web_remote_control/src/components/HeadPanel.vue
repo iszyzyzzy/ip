@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import Joystick from '@/components/Joystick.vue'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { useRemote } from '@/lib/remote'
 
-const props = defineProps<{ config: Record<string, any> | null }>()
+const props = defineProps<{ config: Record<string, any> | null, debug?: boolean }>()
 const remote = useRemote()
 const pad = ref<InstanceType<typeof Joystick>>()
 const eyesFollow = ref(true)
@@ -16,6 +16,7 @@ const pose = ref({ yaw: 0, pitch: 0 })
 const SEND_MS = 50
 let lastSent = 0
 let trailing = 0
+onBeforeUnmount(() => clearTimeout(trailing))
 
 const range = computed(() => {
   const n = props.config?.neck ?? {}
@@ -35,8 +36,8 @@ function payload(x: number, y: number) {
   const yaw = map(-x, range.value.yaw)
   const pitch = map(y, range.value.pitch)
   pose.value = { yaw, pitch }
-  const targets: Record<string, unknown> = { neck: { yaw_rad: yaw, pitch_rad: pitch } }
-  if (eyesFollow.value) {
+  const targets: Record<string, unknown> = props.config?.neck?.enabled ? { neck: { yaw_rad: yaw, pitch_rad: pitch } } : {}
+  if (eyesFollow.value && props.config?.eyes?.enabled) {
     const eye = { gaze_x: x * 0.6, gaze_y: -y * 0.6, openness: 1, brow: 0 }
     targets.eyes = { left: eye, right: eye, roll: 0 }
   }
@@ -48,7 +49,8 @@ function onMove(x: number, y: number) {
   clearTimeout(trailing)
   if (now - lastSent >= SEND_MS) {
     lastSent = now
-    remote.targets(payload(x, y))
+    const targets = payload(x, y)
+    if (Object.keys(targets).length) remote.targets(targets)
   } else {
     // 保证最后一个位置一定发出，否则松手位置可能与显示不一致。
     trailing = window.setTimeout(() => onMove(x, y), SEND_MS - (now - lastSent))
@@ -58,7 +60,8 @@ function onMove(x: number, y: number) {
 function center() {
   clearTimeout(trailing)
   pad.value?.reset()
-  remote.targets(payload(0, 0), true)
+  const targets = payload(0, 0)
+  if (Object.keys(targets).length) remote.targets(targets, true)
 }
 
 function blink(left: boolean, right: boolean) {
@@ -117,7 +120,7 @@ const feedback = computed(() => {
     </div>
     <div class="grid grid-cols-2 gap-2">
       <Button variant="outline" class="h-11" :disabled="!remote.controlling.value" @click="center">回中</Button>
-      <Button variant="outline" class="h-11" :disabled="!remote.controlling.value" @click="zero">设为零点</Button>
+      <Button variant="outline" class="h-11" :disabled="!remote.controlling.value" v-if="props.debug" @click="zero">设为零点</Button>
     </div>
   </div>
 </template>

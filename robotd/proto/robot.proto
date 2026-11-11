@@ -21,6 +21,7 @@ service RobotControl {
   rpc ZeroNeck(ZeroRequest) returns (Ack);
   rpc ListActions(Empty) returns (ActionList);
   rpc PutAction(ActionUpdate) returns (ActionRecord);
+  rpc CapturePreset(PresetCapture) returns (ActionRecord);
   rpc DeleteAction(ActionDelete) returns (Ack);
   rpc RunAction(RunRequest) returns (Ack);
   rpc CancelAction(LeaseRequest) returns (Ack);
@@ -62,6 +63,7 @@ message Targets {
   eyes.v1.Pose eyes = 5;
   eyes.v1.BlinkRequest blink = 6;
   ServoTarget servo = 7;
+  optional eyes.v1.Expression eye_expression = 8;
 }
 message TargetRequest { string token = 1; Targets targets = 2; }
 message StopRequest { bool latch = 1; }
@@ -83,7 +85,34 @@ message RobotState {
 }
 message ActionStep { uint32 at_ms = 1; Targets targets = 2; }
 // 时间点发送目标，不做机器人逆运动学；结束、取消或失去租约后停止。
-message Action { string name = 1; repeated ActionStep steps = 2; uint32 duration_ms = 3; }
+message Action {
+  string name = 1;
+  repeated ActionStep steps = 2;
+  uint32 duration_ms = 3;
+  oneof definition {
+    ActionPreset preset = 4;
+    ActionSequence sequence = 5;
+  }
+}
+message ActionPreset {
+  Targets targets = 1;
+  uint32 move_ms = 2;
+}
+message ActionSequence { repeated PresetStep steps = 1; }
+message PresetStep {
+  string preset = 1;
+  optional uint32 move_ms = 2; // 省略时沿用预设的运动时间。
+  uint32 hold_ms = 3; // 运动时间结束后再停留。
+}
+message PresetCapture {
+  string name = 1;
+  uint64 expected_revision = 2;
+  bool left_arm = 3;
+  bool right_arm = 4;
+  bool neck = 5;
+  optional eyes.v1.Expression eye_expression = 6;
+  uint32 move_ms = 7;
+}
 message ActionRecord { uint64 revision = 1; Action action = 2; bool deleted = 3; }
 message ActionList { repeated ActionRecord actions = 1; }
 message ActionUpdate { uint64 expected_revision = 1; Action action = 2; }

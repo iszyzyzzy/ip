@@ -351,6 +351,7 @@ pub struct Hardware {
     requested_mode: i32,
     eye_cfg: ep::Config,
     eye_pose: Option<ep::Pose>,
+    eye_expression: i32,
     eye_revision: u64,
     next_neck: Instant,
     next_arm: Instant,
@@ -371,6 +372,7 @@ impl Hardware {
             requested_mode: 3,
             eye_cfg,
             eye_pose: None,
+            eye_expression: ep::Expression::Normal as i32,
             eye_revision: 0,
             next_neck: Instant::now(),
             next_arm: Instant::now(),
@@ -516,6 +518,7 @@ impl Hardware {
             self.state["neck"][key] = json!({"state":states[d[1] as usize],"fault":faults[d[2] as usize],"temperature_c":d[3],
                 "position_rad":f(4),"joint_position_rad":(f(4)-axis.offset_rad)/axis.direction as f64,
                 "position_deg":f(4).to_degrees(),"velocity_rad_s":f(8),"effort":f(12),"target_rad":f(16),"output":f(20),
+                "feedback_time":SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs_f64(),
                 "effort_unit":unit,"feedback_age_ms":if u(24)==u32::MAX {None} else {Some(u(24))},"tx_failures":u(28)});
         }
         self.state["neck"]["missed_control_ticks"] =
@@ -568,6 +571,20 @@ impl Devices for Hardware {
                 .revision;
             self.eye_cfg.mode = Some(ep::Mode::External as i32);
             self.eye_pose = Some(*p);
+        }
+        if let Some(expression) = t.eye_expression {
+            let eye = self
+                .eye
+                .as_mut()
+                .ok_or_else(|| anyhow::anyhow!("眼屏未连接"))?;
+            self.rt.block_on(async {
+                tokio::time::timeout(
+                    Duration::from_millis(300),
+                    eye.set_expression(ep::ExpressionRequest { expression }),
+                )
+                .await
+            })??;
+            self.eye_expression = expression;
         }
         if let Some(b) = &t.blink {
             let eye = self
@@ -731,6 +748,15 @@ impl Devices for Hardware {
                                 .into_inner()
                                 .revision;
                     }
+                }
+                if s.expression != self.eye_expression {
+                    tokio::time::timeout(
+                        Duration::from_millis(300),
+                        eye.set_expression(ep::ExpressionRequest {
+                            expression: self.eye_expression,
+                        }),
+                    )
+                    .await??;
                 }
                 self.state["eyes"] = serde_json::to_value(s)?;
                 Ok::<_, anyhow::Error>(())
