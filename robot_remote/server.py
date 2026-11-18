@@ -19,13 +19,11 @@ from google.protobuf.json_format import MessageToDict, ParseDict, ParseError
 
 from robotd.pb import robot_pb2 as pb, robot_pb2_grpc as pg
 
+from . import RemoteError
+from .gamepad import CHORDS, Gamepad
+
 log = logging.getLogger(__name__)
 MAX_MESSAGE_SIZE = 1024 * 1024
-HTTP_STATUS = {
-    "INVALID_ARGUMENT": 400, "UNAUTHENTICATED": 401, "PERMISSION_DENIED": 403,
-    "NOT_FOUND": 404, "ABORTED": 409, "FAILED_PRECONDITION": 409,
-    "RESOURCE_EXHAUSTED": 429, "UNAVAILABLE": 503, "DEADLINE_EXCEEDED": 504,
-}
 # HTTP 与 WebSocket 共用命令表，避免两种入口的控制语义发生漂移。
 COMMANDS = {
     "get_state": ("GetState", pb.Empty, False),
@@ -46,6 +44,8 @@ COMMANDS = {
     "cancel_action": ("CancelAction", pb.LeaseRequest, True),
 }
 ROUTES = [
+    ("GET", "/api/gamepad", "get_gamepad"),
+    ("PUT", "/api/gamepad", "set_gamepad"),
     ("GET", "/api/state", "get_state"),
     ("GET", "/api/config", "get_config"),
     ("PUT", "/api/config", "update_config"),
@@ -63,16 +63,6 @@ ROUTES = [
     ("POST", "/api/actions/run", "run_action"),
     ("POST", "/api/actions/cancel", "cancel_action"),
 ]
-
-
-class RemoteError(Exception):
-    def __init__(self, code, message, status=None):
-        super().__init__(message)
-        self.code = code
-        self.status = status or HTTP_STATUS.get(code, 500)
-
-    def payload(self):
-        return {"code": self.code, "message": str(self)}
 
 
 def message_dict(message):
@@ -195,6 +185,27 @@ class Gateway:
     async def execute(self, method, params, peer=None):
         if self.closing:
             raise RemoteError("UNAVAILABLE", "遥控服务正在退出")
+        if method == "get_gamepad":
+            return self.gamepad.status()
+        if method == "set_gamepad":
+            chord, action = params.get("chord"), params.get("action")
+            if chord not in CHORDS or not isinstance(action, str):
+                raise RemoteError("INVALID_ARGUMENT", "请选择组合键和动作")
+            if action:
+                library = await self.execute("list_actions", {})
+                if not any(not row["deleted"] and row["action"]["name"] == action
+                           for row in library["actions"]):
+                    raise RemoteError("NOT_FOUND", "动作已移除，请重新选择")
+            bindings = self.gamepad.bindings.copy()
+            if action:
+                bindings[chord] = action
+            else:
+                bindings.pop(chord, None)
+            try:
+                self.gamepad.save(bindings)
+            except OSError as error:
+                raise RemoteError("INTERNAL", f"无法保存手柄绑定：{error}") from error
+            return {"bindings": self.gamepad.bindings}
         if not isinstance(method, str) or method not in COMMANDS:
             raise RemoteError("NOT_FOUND", "命令不存在")
         self.expire_sessions()
@@ -258,7 +269,8 @@ class Gateway:
                 # 共用一个有超时的状态查询，网页数量不会耗尽 robotd 的流名额。
                 state = await self.rpc("GetState", pb.Empty())
                 self.expire_sessions()
-                self.publish({"type": "state", "state": message_dict(state)})
+                self.publish({"type": "state", "state": message_dict(state), "gamepad": self.gamepad.status(),
+                              "server_time": time.time()})
                 if failed:
                     log.info("已重新连接 robotd：%s", self.target)
                 failed = False
@@ -436,9 +448,13 @@ async def lifecycle(app):
         ("grpc.max_send_message_length", MAX_MESSAGE_SIZE)])
     gateway.stub = pg.RobotControlStub(gateway.channel)
     watcher = asyncio.create_task(gateway.watch())
+    gamepad = asyncio.create_task(gateway.gamepad.run())
     try:
         yield
     finally:
+        gamepad.cancel()
+        with suppress(asyncio.CancelledError):
+            await gamepad
         watcher.cancel()
         with suppress(asyncio.CancelledError):
             await watcher
@@ -459,7 +475,8 @@ async def shutdown(app):
 
 
 def create_app(target="127.0.0.1:50051", *, robotd_token="", api_token="",
-               allowed_origins=(), state_interval_ms=100, rpc_timeout=2, web_root=None):
+               allowed_origins=(), state_interval_ms=100, rpc_timeout=2, web_root=None,
+               gamepad_file=None):
     if not 50 <= state_interval_ms <= 5000:
         raise ValueError("状态间隔必须在 50..5000 ms")
     if not 0.1 <= rpc_timeout <= 5:
@@ -467,6 +484,8 @@ def create_app(target="127.0.0.1:50051", *, robotd_token="", api_token="",
     app = web.Application(middlewares=[middleware], client_max_size=MAX_MESSAGE_SIZE)
     gateway = Gateway(target, robotd_token, api_token, allowed_origins,
                       state_interval_ms, rpc_timeout)
+    state_dir = Path(os.environ.get("STATE_DIRECTORY") or Path.home() / ".config/robot-remote")
+    gateway.gamepad = Gamepad(gateway, gamepad_file or state_dir / "gamepad.json")
     app[GATEWAY] = gateway
     app.cleanup_ctx.append(lifecycle)
     app.on_shutdown.append(shutdown)

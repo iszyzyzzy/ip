@@ -1,12 +1,15 @@
 """通过实际本机 HTTP、WebSocket 和 gRPC 验证网页接入语义。"""
 import asyncio
 import io
+from pathlib import Path
+from unittest.mock import Mock
 import unittest
 
 from aiohttp import ClientTimeout, WSMsgType
 from aiohttp.test_utils import TestClient, TestServer
 
 from robot_remote.server import GATEWAY, create_app
+from robot_remote.gamepad import EVENT, Gamepad, Joystick
 from robotd.tests.support import RustDaemon
 
 
@@ -16,7 +19,8 @@ class RemoteTests(unittest.IsolatedAsyncioTestCase):
         self.port = self.backend.port
         app = create_app(f"127.0.0.1:{self.port}", robotd_token="upstream-secret",
                          api_token="web-secret", allowed_origins=["http://localhost:5173"],
-                         state_interval_ms=50, rpc_timeout=0.5)
+                         state_interval_ms=50, rpc_timeout=0.5,
+                         gamepad_file=Path(self.backend.tmp.name) / "gamepad.json")
         self.client = TestClient(TestServer(app), timeout=ClientTimeout(total=3))
         await self.client.start_server()
         self.headers = {"Authorization": "Bearer web-secret"}
@@ -83,6 +87,46 @@ class RemoteTests(unittest.IsolatedAsyncioTestCase):
         result = await self.api("POST", "/api/control/acquire", {"owner": "http", "ttl_ms": ttl})
         self.assertNotIn("token", result["result"])
         return result["result"]["session_id"]
+
+    async def test_bluetooth_companion_drive_chord_and_stop(self):
+        gateway = self.client.app[GATEWAY]
+        controller = gateway.gamepad
+        pad = Joystick.__new__(Joystick)
+        pad.axes = [0, 1]
+        pad.buttons = [0x13b, 0x136, 0x137, 0x130, 0x13a]
+        pad.x = pad.y = 0
+        pad.held = set()
+
+        async def frame(*events):
+            pad.file = Mock()
+            pad.file.read.side_effect = [b"".join(EVENT.pack(0, v, k, i) for v, k, i in events), None]
+            await controller.tick(pad, pad.read())
+
+        await self.api("POST", "/api/actions", {"action": {"name": "点头", "preset": {
+            "move_ms": 500, "targets": {"neck": {"yaw_rad": 0.1}}}}})
+        await self.api("POST", "/api/actions", {"action": {"name": "问候", "sequence": {
+            "steps": [{"preset": "点头", "hold_ms": 200}]}}})
+        await self.api("PUT", "/api/gamepad", {"chord": "RB+A", "action": "问候"})
+        await self.api("PUT", "/api/gamepad", {"chord": "L3+A", "action": "点头"})
+        await self.api("PUT", "/api/gamepad", {"chord": "L3+A", "action": ""})
+        await self.api("PUT", "/api/gamepad", {"chord": "RB+A", "action": "不存在"}, status=404)
+        self.assertEqual(Gamepad(gateway, controller.path).bindings, {"RB+A": "问候"})
+        await frame((1, 0x81, 0))
+        self.assertFalse(controller.session)
+        await frame((0, 1, 0), (1, 1, 0))
+        self.assertTrue(controller.session)
+        await self.api("POST", "/api/control/acquire", {}, status=429)
+        await frame((0, 1, 0), (1, 1, 1), (-24000, 2, 1))
+        self.assertTrue(controller.drive)
+        await self.state_until(lambda s: any(e["operation"] == "targets"
+            and e["value"].get("chassis", {}).get("speedMS", 0) > 0
+            for e in s["devices"]["events"]))
+        await frame((0, 1, 1))
+        self.assertFalse(controller.drive)
+        await frame((1, 1, 2), (1, 1, 3))
+        await self.state_until(lambda s: s["action"] == "问候")
+        await frame((1, 1, 4))
+        await self.state_until(lambda s: s["latched"] and not s["owner"] and not s["action"])
 
     async def ws_receive(self, ws, predicate):
         async with asyncio.timeout(3):

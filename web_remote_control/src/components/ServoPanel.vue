@@ -5,9 +5,10 @@ import { Input } from '@/components/ui/input'
 import { Slider } from '@/components/ui/slider'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useRemote } from '@/lib/remote'
+import OfflinePanel from './OfflinePanel.vue'
 import JointCalibration from './JointCalibration.vue'
 
-const props = defineProps<{ config: Record<string, any> | null, revision: string }>()
+const props = defineProps<{ config: Record<string, any> | null, revision: string, live: boolean }>()
 const emit = defineEmits<{ saved: [] }>()
 const remote = useRemote()
 const side = ref('left_arm')
@@ -17,7 +18,7 @@ const arm = computed(() => props.config?.[side.value])
 const rows = computed(() => (arm.value?.joints ?? []).map((joint: any, index: number) => {
   const feedback = remote.state.value?.devices?.[side.value]?.[String(index)]
   const fresh = feedback && !feedback.error && Number.isFinite(feedback.pwm)
-    && Date.now() / 1000 - feedback.feedback_time < 2
+    && remote.serverTime.value - feedback.feedback_time < 2
   return { id: joint.id, index, key: `${side.value}-${index}`, feedback, fresh }
 }))
 watch(rows, values => {
@@ -55,6 +56,8 @@ function nudge(index: number, delta: number) {
       <ToggleGroupItem value="left_arm" class="h-11 flex-1">左臂 · U2</ToggleGroupItem>
       <ToggleGroupItem value="right_arm" class="h-11 flex-1">右臂 · U3</ToggleGroupItem>
     </ToggleGroup>
+    <OfflinePanel :name="side === 'left_arm' ? '左臂' : '右臂'" :offline="!live || !arm?.enabled || !rows.some((r: {fresh: boolean}) => r.fresh)">
+    <div class="flex flex-col gap-4">
     <p class="text-xs leading-relaxed text-muted-foreground">从根部到末端逐个调节。拖动滑条后松手发送位置，或输入读数后点击移动；运动时间固定为 0001，不改标定零点。</p>
     <p v-if="!arm?.enabled" class="rounded-lg bg-muted p-3 text-sm">这一侧舵机尚未启用。</p>
     <section v-for="row in rows" :key="row.key" class="space-y-6 rounded-xl border p-4">
@@ -82,5 +85,7 @@ function nudge(index: number, delta: number) {
     </section>
     <p class="text-xs leading-relaxed text-muted-foreground">若故障排除后仍不保持，可点击对应关节的“恢复保持当前位置”。该操作发送 PULR，不会重发旧目标，也不能绕过温度、电压或反馈保护。</p>
     <p v-if="!remote.controlling.value" class="text-center text-xs text-muted-foreground">取得控制权后即可调节。</p>
+    </div>
+    </OfflinePanel>
   </div>
 </template>

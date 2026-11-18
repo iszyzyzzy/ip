@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { type ActionRecord, useRemote } from '@/lib/remote'
 
-const props = defineProps<{ debug: boolean, config: Record<string, any> | null }>()
+const props = defineProps<{ debug: boolean, eyesOnline: boolean, config: Record<string, any> | null }>()
 const remote = useRemote()
 const records = ref<ActionRecord[]>([])
 const active = computed(() => records.value.filter(record => !record.deleted))
@@ -121,8 +121,9 @@ watch(() => remote.online.value, online => { if (online) load() })
       <Button v-else variant="ghost" size="sm" @click="load">刷新</Button>
     </div>
 
+    <p v-if="props.config?.eyes?.enabled && !eyesOnline" class="text-sm text-muted-foreground">眼屏组件不在线</p>
     <div v-if="props.config?.eyes?.enabled" class="grid grid-cols-3 gap-2" aria-label="表情">
-      <Button v-for="item in expressions" :key="item.value" variant="outline" :disabled="!canRun" @click="showExpression(item.value)">{{ item.label }}</Button>
+      <Button v-for="item in expressions" :key="item.value" variant="outline" :disabled="!canRun || !eyesOnline" @click="showExpression(item.value)">{{ item.label }}</Button>
     </div>
 
     <section v-if="debug" class="space-y-4 rounded-xl border p-4">

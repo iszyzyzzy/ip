@@ -6,7 +6,7 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { useRemote } from '@/lib/remote'
 
-const props = defineProps<{ config: Record<string, any> | null, debug?: boolean }>()
+const props = defineProps<{ config: Record<string, any> | null, debug?: boolean, neckOnline: boolean, eyesOnline: boolean }>()
 const remote = useRemote()
 const pad = ref<InstanceType<typeof Joystick>>()
 const eyesFollow = ref(true)
@@ -36,8 +36,8 @@ function payload(x: number, y: number) {
   const yaw = map(-x, range.value.yaw)
   const pitch = map(y, range.value.pitch)
   pose.value = { yaw, pitch }
-  const targets: Record<string, unknown> = props.config?.neck?.enabled ? { neck: { yaw_rad: yaw, pitch_rad: pitch } } : {}
-  if (eyesFollow.value && props.config?.eyes?.enabled) {
+  const targets: Record<string, unknown> = props.neckOnline ? { neck: { yaw_rad: yaw, pitch_rad: pitch } } : {}
+  if (eyesFollow.value && props.eyesOnline) {
     const eye = { gaze_x: x * 0.6, gaze_y: -y * 0.6, openness: 1, brow: 0 }
     targets.eyes = { left: eye, right: eye, roll: 0 }
   }
@@ -83,6 +83,8 @@ const feedback = computed(() => {
 
 <template>
   <div class="flex flex-col gap-4">
+    <p v-if="!neckOnline && eyesOnline" class="text-sm text-muted-foreground">颈部组件不在线，摇杆仅控制眼睛。</p>
+    <p v-if="neckOnline && !eyesOnline" class="text-sm text-muted-foreground">眼屏组件不在线</p>
     <div class="mx-auto w-full max-w-[min(80vw,22rem)]">
       <Joystick
         ref="pad"
@@ -110,17 +112,17 @@ const feedback = computed(() => {
 
     <div class="flex items-center justify-between rounded-lg border p-3">
       <Label for="eyes-follow" class="text-sm">眼睛跟随摇杆</Label>
-      <Switch id="eyes-follow" v-model="eyesFollow" />
+      <Switch id="eyes-follow" v-model="eyesFollow" :disabled="!eyesOnline" />
     </div>
 
     <div class="grid grid-cols-3 gap-2">
-      <Button variant="secondary" class="h-11" :disabled="!remote.controlling.value" @click="blink(true, true)">眨眼</Button>
-      <Button variant="secondary" class="h-11" :disabled="!remote.controlling.value" @click="blink(false, true)">眨右眼</Button>
-      <Button variant="secondary" class="h-11" :disabled="!remote.controlling.value" @click="blink(true, false)">眨左眼</Button>
+      <Button variant="secondary" class="h-11" :disabled="!remote.controlling.value || !eyesOnline" @click="blink(true, true)">眨眼</Button>
+      <Button variant="secondary" class="h-11" :disabled="!remote.controlling.value || !eyesOnline" @click="blink(false, true)">眨右眼</Button>
+      <Button variant="secondary" class="h-11" :disabled="!remote.controlling.value || !eyesOnline" @click="blink(true, false)">眨左眼</Button>
     </div>
     <div class="grid grid-cols-2 gap-2">
       <Button variant="outline" class="h-11" :disabled="!remote.controlling.value" @click="center">回中</Button>
-      <Button variant="outline" class="h-11" :disabled="!remote.controlling.value" v-if="props.debug" @click="zero">设为零点</Button>
+      <Button variant="outline" class="h-11" :disabled="!remote.controlling.value" v-if="props.debug && neckOnline" @click="zero">设为零点</Button>
     </div>
   </div>
 </template>

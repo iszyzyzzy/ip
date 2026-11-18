@@ -1,12 +1,20 @@
 # 网页遥控服务 robot-remote
 
-独立 HTTP/WebSocket 进程，通过 gRPC 连接 robotd。可部署在 robotd 所在树莓派，也可部署在另一台机器。网关只保留临时控制会话；配置、动作、设备状态和控制权仍以 robotd 为准。
+独立 HTTP/WebSocket 进程，通过 gRPC 连接 robotd。可部署在 robotd 所在树莓派，也可部署在另一台机器。网关保存手柄绑定，机器人配置、动作、设备状态和控制权由 robotd 管理。
 
 ```text
 网页遥控器 ── HTTP / WebSocket ── robot-remote :8080 ── gRPC ── robotd :50051
 ```
 
 ## 安装和启动
+
+使用遥控器交付包时，在树莓派解压，进入解压目录，通过现有遥控服务的 Python 虚拟环境启动：
+
+```sh
+python -m robot_remote.server --web-root ./web-remote --host 0.0.0.0 --port 8080
+```
+
+更新已有服务时沿用原有环境文件和 robotd 地址，将工作目录和网页目录指向新版。交付包包含已构建的网页、网关和 gRPC 客户端，可复用已安装的 aiohttp、grpcio 和 protobuf。
 
 在仓库根目录安装额外的 HTTP 依赖：
 
@@ -49,6 +57,25 @@ robot-remote --allow-origin http://localhost:5173
 
 变量为空时对应连接无需凭据。对局域网开放服务时设置网页凭据。HTTP 请求携带 `Authorization: Bearer <网页凭据>`；浏览器 WebSocket 在连接后发送 `auth`。凭据不放 URL。网关默认监听 `127.0.0.1:8080`。
 
+## 蓝牙手柄和横屏仪表
+
+手柄与运行网关的树莓派配对。首次连接可在 `bluetoothctl` 中执行 `power on`、`scan on`，让手柄进入配对模式，使用其地址依次执行 `pair <地址>`、`trust <地址>`、`connect <地址>`，完成后 `scan off`。要固定到交付用的这一只，可在网关环境文件中设置 `ROBOT_REMOTE_GAMEPAD_MAC=<地址>` 并重启网关。
+
+手柄连接后应出现 `/dev/input/js0`（编号可能不同），网关运行用户需要对其有读取权限。若只有 event 节点，可运行 `sudo modprobe joydev`。网关会发现新接入或重新连接的手柄。
+
+| 操作 | 按键 |
+| --- | --- |
+| 取得控制权 / 释放 | 左摇杆回中后按 Menu（三横线） |
+| 前进、后退和转向 | 按住 LB，推动左摇杆。松开 LB 驻车 |
+| 执行动作或序列 | 按住 RB、L3 或 R3，再按 A、B、X 或 Y |
+| 锁定急停 | View（双窗口）；在全控网页中解锁 |
+
+手柄使用独占控制权，底盘指令有效期为 200 ms。断开手柄时释放租约，重新连接后需再次按 Menu。前进最高 0.3 m/s，若 robotd 配置限速更低则采用配置值。
+
+网页默认打开竖屏全控。顶部「进入调试模式 → 手柄」可配置 12 个组合键。随附 systemd 服务将绑定保存在 `/var/lib/robot-remote/gamepad.json`；手动启动时默认使用 `~/.config/robot-remote/gamepad.json`。预设和序列使用 robotd 动作库中的名称。配对前也可完成绑定。
+
+将手机横放在手柄支架上，点顶部「手柄仪表」即可查看速度、转角、动作与按键绑定。进入仪表会释放网页控制权；网页急停始终可用。浏览器会记住视图选择。
+
 ## HTTP API
 
 所有写请求使用 `Content-Type: application/json`。成功返回 `{"result": ...}`，错误返回 `{"error":{"code":"INVALID_ARGUMENT","message":"..."}}`。错误 code 保留 robotd 的 gRPC 状态名称；常见 HTTP 状态为 400 参数错误、401 未认证、403 会话/来源错误、409 版本冲突或状态不允许、429 控制权占用、503 后端不可用、504 后端超时。
@@ -61,6 +88,8 @@ robot-remote --allow-origin http://localhost:5173
 | `PUT /api/config` | `expected_revision`, `config` | `update_config` |
 | `PUT /api/eyes` | `expected_revision`, `settings`, `save`, `connect_tracking` | `update_eyes` |
 | `GET /api/actions` | 无 | `list_actions` |
+| `GET /api/gamepad` | 无 | `get_gamepad` |
+| `PUT /api/gamepad` | `chord`（如 `RB+A`）、`action`（动作名，空字符串清除此键） | `set_gamepad` |
 | `POST /api/actions` | `expected_revision`, `action` | `put_action` |
 | `POST /api/actions/capture` | `name`, `expected_revision`, `move_ms`，按需填写 `left_arm`, `right_arm`, `neck`, `eye_expression` | `capture_preset` |
 | `DELETE /api/actions` | `expected_revision`, `name` | `delete_action` |
