@@ -236,7 +236,9 @@ async function targets(value: Record<string, unknown>, force = false) {
 
 async function command<T = any>(method: string, params: Record<string, unknown> = {}) {
   try {
-    return await send<T>(method, params)
+    const result = await send<T>(method, params)
+    if (method === 'update_config') dropControl()
+    return result
   } catch (error) {
     message.value = (error as Error).message
     throw error

@@ -137,7 +137,7 @@ function submitToken() {
           <HeadPanel :config="config" :debug="mode === 'debug'" />
         </TabsContent>
         <TabsContent v-if="mode === 'debug'" value="servo" class="pt-3" force-mount>
-          <ServoPanel :config="config" />
+          <ServoPanel :config="config" :revision="configRevision" @saved="loadConfig" />
         </TabsContent>
         <TabsContent v-if="mode === 'debug'" value="eyes" class="pt-3" force-mount>
           <EyesPanel :config="config" :revision="configRevision" @saved="loadConfig" />

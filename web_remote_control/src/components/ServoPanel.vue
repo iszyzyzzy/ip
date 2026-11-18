@@ -5,8 +5,10 @@ import { Input } from '@/components/ui/input'
 import { Slider } from '@/components/ui/slider'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useRemote } from '@/lib/remote'
+import JointCalibration from './JointCalibration.vue'
 
-const props = defineProps<{ config: Record<string, any> | null }>()
+const props = defineProps<{ config: Record<string, any> | null, revision: string }>()
+const emit = defineEmits<{ saved: [] }>()
 const remote = useRemote()
 const side = ref('left_arm')
 const drafts = reactive<Record<string, number>>({})
@@ -75,6 +77,8 @@ function nudge(index: number, delta: number) {
       </div>
       </div>
       <Button variant="ghost" class="h-9 w-full text-xs text-muted-foreground" :disabled="!remote.controlling.value || !row.fresh || sending || !arm?.enabled" @click="move(row.index, row.feedback.pwm, true)">恢复保持当前位置</Button>
+      <JointCalibration v-if="config" :config="config" :revision="revision" :side="side" :index="row.index"
+        :reading="row.fresh ? row.feedback.pwm : null" @saved="emit('saved')" />
     </section>
     <p class="text-xs leading-relaxed text-muted-foreground">若故障排除后仍不保持，可点击对应关节的“恢复保持当前位置”。该操作发送 PULR，不会重发旧目标，也不能绕过温度、电压或反馈保护。</p>
     <p v-if="!remote.controlling.value" class="text-center text-xs text-muted-foreground">取得控制权后即可调节。</p>
