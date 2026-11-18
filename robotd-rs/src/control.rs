@@ -64,34 +64,12 @@ impl Hub {
         simulated: bool,
         rt: tokio::runtime::Handle,
     ) -> anyhow::Result<Self> {
-        let (rev, cfg) = store.config()?;
-        let audio = Player::new(cfg.audio.clone(), simulated);
+        let mut engine = Engine::new(store, simulated, rt)?;
+        let audio = engine.audio.clone();
+        let state = engine.state.clone();
         let (normal, nrx) = crossbeam_channel::bounded(64);
         let (urgent, urx) = crossbeam_channel::bounded(8);
-        let state = Arc::new(RwLock::new(pb::RobotState::default()));
         let stopping = Arc::new(AtomicBool::new(false));
-        let mut engine = Engine {
-            store,
-            cfg,
-            config_revision: rev,
-            applied: 0,
-            revision: 0,
-            simulated,
-            rt,
-            devices: None,
-            state: state.clone(),
-            audio: audio.clone(),
-            lease: None,
-            lease_end: Instant::now(),
-            action: None,
-            chassis: None,
-            chassis_end: Instant::now(),
-            next_chassis: Instant::now(),
-            next_poll: Instant::now(),
-            stopped: true,
-            latched: false,
-            fault: String::new(),
-        };
         let (ready, rx) = std::sync::mpsc::sync_channel(1);
         let stop = stopping.clone();
         let worker = std::thread::Builder::new()
@@ -179,7 +157,37 @@ struct Engine {
 fn invalid(e: impl std::fmt::Display) -> Status {
     Status::invalid_argument(e.to_string())
 }
+#[cfg(test)]
+mod tests;
+
 impl Engine {
+    fn new(store: Store, simulated: bool, rt: tokio::runtime::Handle) -> anyhow::Result<Self> {
+        let (rev, cfg) = store.config()?;
+        let audio = Player::new(cfg.audio.clone(), simulated);
+        Ok(Self {
+            store,
+            cfg,
+            config_revision: rev,
+            applied: 0,
+            revision: 0,
+            simulated,
+            rt,
+            devices: None,
+            state: Arc::new(RwLock::new(pb::RobotState::default())),
+            audio,
+            lease: None,
+            lease_end: Instant::now(),
+            action: None,
+            chassis: None,
+            chassis_end: Instant::now(),
+            next_chassis: Instant::now(),
+            next_poll: Instant::now(),
+            stopped: true,
+            latched: false,
+            fault: String::new(),
+        })
+    }
+
     fn reconnect(&mut self) {
         self.applied = 0;
         self.devices = None;
@@ -204,11 +212,32 @@ impl Engine {
         }
     }
     fn run(&mut self, normal: Receiver<Job>, urgent: Receiver<Job>, stop: Arc<AtomicBool>) {
+        let mut waiting: Option<Job> = None;
+        let idle = crossbeam_channel::never();
         while !stop.load(Ordering::Relaxed) {
+            // 等舵机回包时保留普通请求顺序，急停与租约检查仍由控制线程处理。
+            let input = if waiting.is_some() { &idle } else { &normal };
             crossbeam_channel::select_biased! {
-                recv(urgent)->job=>{if let Ok(job)=job {self.job(job,true);}else{break;}},
-                recv(normal)->job=>{if let Ok(job)=job {self.tick();self.job(job,false);}else{break;}},
-                default(Duration::from_millis(5))=>{self.tick();self.publish();},
+                recv(urgent) -> job => {
+                    let Ok(job) = job else { break };
+                    if self.job(job) && let Some(queued) = waiting.take() {
+                        let _ = queued.reply.send(Err(Status::cancelled("停止操作已取消等待发送的目标")));
+                    }
+                    continue;
+                },
+                recv(input) -> job => {
+                    let Ok(job) = job else { break };
+                    waiting = Some(job);
+                },
+                default(Duration::from_millis(5)) => {},
+            }
+            self.tick(!waiting.as_ref().is_some_and(|job| self.awaiting_servo(job)));
+            if waiting.as_ref().is_some_and(|job| {
+                job.reply.is_closed() || Instant::now() >= job.deadline || !self.awaiting_servo(job)
+            }) {
+                self.job(waiting.take().unwrap());
+            } else {
+                self.publish();
             }
         }
         self.stop_motion(true);
@@ -216,17 +245,19 @@ impl Engine {
         self.devices = None;
         self.publish();
     }
-    fn job(&mut self, job: Job, _urgent: bool) {
+    fn job(&mut self, job: Job) -> bool {
         if job.reply.is_closed() || Instant::now() >= job.deadline {
-            return;
+            return false;
         }
         let shutdown = matches!(job.op, Op::Shutdown);
         let result = self.process(job.op);
+        let ok = result.is_ok();
         self.publish();
         let _ = job.reply.send(result);
         if shutdown {
             self.stop_motion(true);
         }
+        ok
     }
     fn publish(&self) {
         let s = pb::RobotState {
@@ -559,7 +590,12 @@ impl Engine {
             }
         }
     }
-    fn tick(&mut self) {
+    fn awaiting_servo(&self, job: &Job) -> bool {
+        matches!(&job.op, Op::Targets(r) if self.action.is_none()
+            && self.lease.as_ref().is_some_and(|l| l.token == r.token)
+            && r.targets.as_ref().is_some_and(|t| self.devices.as_ref().is_some_and(|d| d.waiting_for_reply(t))))
+    }
+    fn tick(&mut self, mut start_arm_query: bool) {
         let now = Instant::now();
         if self.lease.is_some() && now >= self.lease_end {
             self.stop_motion(true);
@@ -581,15 +617,24 @@ impl Engine {
                     let _ = self.io_result(Err(anyhow::anyhow!("动作调度延迟超过 250 ms")));
                     return;
                 }
-                active.next += 1;
-                let relative = active.relative;
-                if self.apply(step.targets.as_ref().unwrap()).is_err() {
-                    return;
-                }
-                if relative {
-                    // 按实际下发完成时间留足运动与停留，避免多设备串行发送吞掉时长。
-                    self.action.as_mut().unwrap().start =
-                        Instant::now() - Duration::from_millis(step.at_ms as u64);
+                let targets = step.targets.as_ref().unwrap();
+                if self
+                    .devices
+                    .as_ref()
+                    .is_some_and(|d| d.waiting_for_reply(targets))
+                {
+                    start_arm_query = false;
+                } else {
+                    active.next += 1;
+                    let relative = active.relative;
+                    if self.apply(targets).is_err() {
+                        return;
+                    }
+                    if relative {
+                        // 按实际下发完成时间留足运动与停留，避免多设备串行发送吞掉时长。
+                        self.action.as_mut().unwrap().start =
+                            Instant::now() - Duration::from_millis(step.at_ms as u64);
+                    }
                 }
             } else if finished {
                 self.stop_motion(false);
@@ -612,7 +657,7 @@ impl Engine {
         }
         if now >= self.next_poll {
             if let Some(d) = &mut self.devices {
-                let r = d.poll();
+                let r = d.poll(start_arm_query);
                 let _ = self.io_result(r);
             }
             self.next_poll = now + Duration::from_millis(20);

@@ -22,7 +22,10 @@ pub trait Devices: Send {
     fn stop_chassis(&mut self) -> Result<()>;
     fn zero(&mut self, mask: u8) -> Result<()>;
     fn chassis(&mut self, t: &pb::ChassisTarget) -> Result<()>;
-    fn poll(&mut self) -> Result<()>;
+    fn waiting_for_reply(&self, _targets: &pb::Targets) -> bool {
+        false
+    }
+    fn poll(&mut self, start_arm_query: bool) -> Result<()>;
     fn snapshot(&self) -> Value;
 }
 
@@ -71,7 +74,7 @@ impl Devices for Simulated {
         self.record("chassis", json!({"mode":t.mode,"data":chassis_payload(t)}));
         Ok(())
     }
-    fn poll(&mut self) -> Result<()> {
+    fn poll(&mut self, _: bool) -> Result<()> {
         Ok(())
     }
     fn snapshot(&self) -> Value {
@@ -470,7 +473,7 @@ impl Hardware {
         }
         h.begin()?;
         h.stop()?;
-        h.poll()?;
+        h.poll(true)?;
         Ok(h)
     }
     fn board(&mut self) -> Result<&mut Bridge> {
@@ -677,7 +680,14 @@ impl Devices for Hardware {
         self.state["chassis"]["ready"] = json!(ready);
         Ok(())
     }
-    fn poll(&mut self) -> Result<()> {
+    fn waiting_for_reply(&self, targets: &pb::Targets) -> bool {
+        self.arms.iter().enumerate().any(|(i, arm)| {
+            let moving = [targets.left_arm.is_some(), targets.right_arm.is_some()][i]
+                || targets.servo.is_some_and(|s| usize::from(s.right_arm) == i);
+            moving && arm.as_ref().is_some_and(|a| a.pending.is_some())
+        })
+    }
+    fn poll(&mut self, start_arm_query: bool) -> Result<()> {
         let now = Instant::now();
         if let Some(b) = &mut self.board {
             b.poll()?;
@@ -712,7 +722,10 @@ impl Devices for Hardware {
                     value;
             }
         }
-        if now >= self.next_arm && self.arms.iter().flatten().all(|a| a.pending.is_none()) {
+        if start_arm_query
+            && now >= self.next_arm
+            && self.arms.iter().flatten().all(|a| a.pending.is_none())
+        {
             let items: Vec<_> = self
                 .arms
                 .iter()
