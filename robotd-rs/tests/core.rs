@@ -129,3 +129,52 @@ fn manual_servo_is_individual_and_uses_fast_position_command() {
     target.servo.as_mut().unwrap().position_pwm = 2501;
     assert!(validation::targets(&target, &c).is_err());
 }
+
+#[test]
+fn capture_uses_fresh_joint_angles_and_applies_step_duration() {
+    let mut cfg = Config::defaults();
+    cfg.left_arm.enabled = true;
+    let mut snapshot = json!({"left_arm": {}});
+    for i in 0..4 {
+        snapshot["left_arm"][i.to_string()] =
+            json!({"position_rad": 0.1 * i as f64, "feedback_time": 10.0, "error": ""});
+    }
+    let request = pb::PresetCapture {
+        name: "抬手".into(),
+        left_arm: true,
+        move_ms: 500,
+        ..Default::default()
+    };
+    assert!(robotd::actions::capture(&request, &snapshot, 13.0).is_err());
+    let preset = robotd::actions::capture(&request, &snapshot, 11.0).unwrap();
+    let sequence = pb::Action {
+        name: "挥手".into(),
+        definition: Some(pb::action::Definition::Sequence(pb::ActionSequence {
+            steps: vec![
+                pb::PresetStep {
+                    preset: preset.name.clone(),
+                    move_ms: Some(900),
+                    hold_ms: 1100,
+                },
+                pb::PresetStep {
+                    preset: preset.name.clone(),
+                    move_ms: None,
+                    hold_ms: 250,
+                },
+            ],
+        })),
+        ..Default::default()
+    };
+    let plan = robotd::actions::compile(&sequence, &cfg, |_| Ok(preset.clone())).unwrap();
+    assert_eq!(plan.duration_ms, 2750);
+    assert_eq!(plan.steps[1].at_ms, 2000);
+    let arm = plan.steps[0]
+        .targets
+        .as_ref()
+        .unwrap()
+        .left_arm
+        .as_ref()
+        .unwrap();
+    assert_eq!(arm.duration_ms, 900);
+    assert!((arm.joint_rad[3] - 0.3).abs() < 1e-9);
+}

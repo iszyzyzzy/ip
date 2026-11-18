@@ -5,6 +5,7 @@ package eyes.v1;
 service EyeControl {
   rpc GetState(Empty) returns (State);
   rpc SetPose(Pose) returns (Ack);
+  rpc SetExpression(ExpressionRequest) returns (Ack);
   rpc StreamPoses(stream Pose) returns (Ack);
   rpc Configure(Config) returns (Ack);
   rpc Blink(Empty) returns (Ack);
@@ -14,6 +15,8 @@ service EyeControl {
   rpc ConnectTracking(Empty) returns (Ack);
   rpc TriggerBlink(BlinkRequest) returns (Ack);
 }
+enum Expression { NORMAL = 0; HAPPY = 1; EXCITED = 2; }
+message ExpressionRequest { Expression expression = 1; }
 message Empty {}
 message Ack { uint64 revision = 1; }
 enum Mode { IDLE = 0; MOUSE = 1; IFACIALMOCAP = 2; EXTERNAL = 3; SIMULATOR = 4; }
@@ -113,4 +116,5 @@ message State {
   string output_mode = 10; // window / drm（含 --headless）/ offscreen / control_only
   string left_output = 11;
   string right_output = 12;
+  Expression expression = 13;
 }

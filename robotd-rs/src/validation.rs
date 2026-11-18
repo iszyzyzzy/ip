@@ -12,7 +12,8 @@ pub fn targets(t: &pb::Targets, cfg: &Config) -> Result<()> {
             || t.right_arm.is_some()
             || t.eyes.is_some()
             || t.blink.is_some()
-            || t.servo.is_some(),
+            || t.servo.is_some()
+            || t.eye_expression.is_some(),
         "目标不能为空"
     );
     if let Some(c) = &t.chassis {
@@ -106,6 +107,13 @@ pub fn targets(t: &pb::Targets, cfg: &Config) -> Result<()> {
             range(e.brow as f64, -1.0, 1.0, "brow")?;
         }
         range(p.roll as f64, -0.8f32 as f64, 0.8f32 as f64, "roll")?;
+    }
+    if let Some(expression) = t.eye_expression {
+        ensure!(cfg.eyes.enabled, "眼屏已禁用");
+        ensure!(
+            crate::eyes::v1::Expression::try_from(expression).is_ok(),
+            "未知眼屏表情"
+        );
     }
     if let Some(b) = &t.blink {
         ensure!(cfg.eyes.enabled, "眼屏已禁用");

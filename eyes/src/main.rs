@@ -170,6 +170,7 @@ struct EyesApp {
     control: Option<ControlHub>,
     external: [[f32; 4]; 2],
     external_roll: f32,
+    eye_expression: pb::Expression,
     revision: u64,
     rpc_status: String,
     asset_root: PathBuf,
@@ -308,6 +309,7 @@ impl EyesApp {
             output_mode: self.output_mode.clone(),
             left_output: self.outputs[0].clone(),
             right_output: self.outputs[1].clone(),
+            expression: self.eye_expression as i32,
         }
     }
     fn new(
@@ -390,6 +392,7 @@ impl EyesApp {
             control,
             external: [[0., 0., 1., 0.]; 2],
             external_roll: 0.,
+            eye_expression: pb::Expression::Normal,
             revision: 0,
             rpc_status,
             settings,
@@ -424,6 +427,7 @@ impl EyesApp {
                 continue;
             }
             match pending.command {
+                Command::Expression(expression) => self.eye_expression = expression,
                 Command::Pose(p) => {
                     for (dst, src) in self
                         .external
@@ -547,7 +551,12 @@ impl EyesApp {
             right: self.eyes[1],
             shape: [s.separation, s.iris_size, s.expression, self.roll],
             iris: [s.iris[0], s.iris[1], s.iris[2], 0.],
-            background: [s.background[0], s.background[1], s.background[2], 1.],
+            background: [
+                s.background[0],
+                s.background[1],
+                s.background[2],
+                self.eye_expression as i32 as f32,
+            ],
             extra: [s.glow, s.pupil, s.tilt, 0.],
             layers_a: layer_flags[0],
             layers_b: layer_flags[1],

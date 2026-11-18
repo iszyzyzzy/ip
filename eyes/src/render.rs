@@ -12,10 +12,10 @@ pub struct Uniforms {
     pub viewport: [f32; 4], // width, height, time, scale
     pub left: [f32; 4],     // gaze x/y, openness, brow
     pub right: [f32; 4],
-    pub shape: [f32; 4], // separation, iris size, expression, roll
-    pub iris: [f32; 4],  // RGB、安装顺时针旋转的90度倍数；保持现有uniform布局。
-    pub background: [f32; 4],
-    pub extra: [f32; 4], // glow, pupil, tilt, reserved
+    pub shape: [f32; 4],      // separation, iris size, expression, roll
+    pub iris: [f32; 4],       // RGB、安装顺时针旋转的90度倍数；保持现有uniform布局。
+    pub background: [f32; 4], // RGB、表情编号
+    pub extra: [f32; 4],      // glow, pupil, tilt, reserved
     pub layers_a: [f32; 4],
     pub layers_b: [f32; 4],
     pub jelly_left: [f32; 4],

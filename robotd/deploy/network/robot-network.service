@@ -1,0 +1,9 @@
+[Unit]
+Description=树莓派网络恢复与遥控热点
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/robot-network tick
+TimeoutStartSec=120

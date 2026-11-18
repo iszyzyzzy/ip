@@ -45,6 +45,11 @@ class EyeControlStub:
                 request_serializer=eyes__pb2.Pose.SerializeToString,
                 response_deserializer=eyes__pb2.Ack.FromString,
                 _registered_method=True)
+        self.SetExpression = channel.unary_unary(
+                '/eyes.v1.EyeControl/SetExpression',
+                request_serializer=eyes__pb2.ExpressionRequest.SerializeToString,
+                response_deserializer=eyes__pb2.Ack.FromString,
+                _registered_method=True)
         self.StreamPoses = channel.stream_unary(
                 '/eyes.v1.EyeControl/StreamPoses',
                 request_serializer=eyes__pb2.Pose.SerializeToString,
@@ -93,6 +98,12 @@ class EyeControlServicer:
         raise NotImplementedError('Method not implemented!')
 
     def SetPose(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def SetExpression(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -152,6 +163,11 @@ def add_EyeControlServicer_to_server(servicer, server):
             'SetPose': grpc.unary_unary_rpc_method_handler(
                     servicer.SetPose,
                     request_deserializer=eyes__pb2.Pose.FromString,
+                    response_serializer=eyes__pb2.Ack.SerializeToString,
+            ),
+            'SetExpression': grpc.unary_unary_rpc_method_handler(
+                    servicer.SetExpression,
+                    request_deserializer=eyes__pb2.ExpressionRequest.FromString,
                     response_serializer=eyes__pb2.Ack.SerializeToString,
             ),
             'StreamPoses': grpc.stream_unary_rpc_method_handler(
@@ -244,6 +260,33 @@ class EyeControl:
             target,
             '/eyes.v1.EyeControl/SetPose',
             eyes__pb2.Pose.SerializeToString,
+            eyes__pb2.Ack.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SetExpression(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/eyes.v1.EyeControl/SetExpression',
+            eyes__pb2.ExpressionRequest.SerializeToString,
             eyes__pb2.Ack.FromString,
             options,
             channel_credentials,

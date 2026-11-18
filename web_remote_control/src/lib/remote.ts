@@ -21,7 +21,13 @@ export interface RobotState {
 export interface ActionRecord {
   revision: string
   deleted: boolean
-  action: { name: string, duration_ms: number, steps: unknown[] }
+  action: {
+    name: string
+    duration_ms?: number
+    steps?: unknown[]
+    preset?: { move_ms: number, targets: { eye_expression?: string, left_arm?: unknown, right_arm?: unknown, neck?: unknown } }
+    sequence?: { steps: { preset: string, move_ms?: number, hold_ms: number }[] }
+  }
 }
 
 type Link = 'idle' | 'connecting' | 'auth' | 'ready' | 'closed'
@@ -43,6 +49,8 @@ class CommandError extends Error {
 const link = ref<Link>('idle')
 const state = shallowRef<RobotState | null>(null)
 const backendError = shallowRef<RemoteError | null>(null)
+const gamepad = shallowRef<{ device: string, controlling: boolean, error: string, bindings: Record<string,string>, held: string[] } | null>(null)
+const serverTime = ref(0)
 const lastStateAt = ref(0)
 const controlling = ref(false)
 const busy = ref(false)
@@ -134,6 +142,8 @@ function connect() {
       if (msg.error) waiter.reject(new CommandError(msg.error))
       else waiter.resolve(msg.result)
     } else if (msg.type === 'state') {
+      serverTime.value = msg.server_time ?? Date.now() / 1000
+      gamepad.value = msg.gamepad ?? null
       state.value = msg.state
       backendError.value = null
       lastStateAt.value = Date.now()
@@ -145,6 +155,7 @@ function connect() {
   socket.onclose = (event) => {
     if (ws !== socket) return
     ws = null
+    gamepad.value = null
     failPending('遥控连接已断开')
     // 网关在断线时会释放本连接的会话；本地同步清除，重连后不自动取回控制权。
     dropControl()
@@ -230,7 +241,9 @@ async function targets(value: Record<string, unknown>, force = false) {
 
 async function command<T = any>(method: string, params: Record<string, unknown> = {}) {
   try {
-    return await send<T>(method, params)
+    const result = await send<T>(method, params)
+    if (method === 'update_config') dropControl()
+    return result
   } catch (error) {
     message.value = (error as Error).message
     throw error
@@ -248,6 +261,7 @@ export function useRemote() {
     link: readonly(link),
     state,
     backendError,
+    gamepad, serverTime,
     lastStateAt: readonly(lastStateAt),
     controlling: readonly(controlling),
     busy: readonly(busy),

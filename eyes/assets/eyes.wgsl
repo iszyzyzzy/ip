@@ -37,6 +37,23 @@ fn place(p: vec2f, index: i32, gaze: vec2f, side: f32, mirror: bool, extra_scale
     if !mirror { d.x *= side; }
     return d + 0.5;
 }
+fn segment_distance(p: vec2f, a: vec2f, b: vec2f) -> f32 {
+    let ab = b - a;
+    return length(p - a - ab * clamp(dot(p - a, ab) / dot(ab, ab), 0., 1.));
+}
+fn expression_mask(p: vec2f, expression: f32) -> f32 {
+    var d: f32;
+    if expression == 1. {
+        let x = clamp(p.x, -0.24, 0.24);
+        d = length(p - vec2f(x, -0.085 + 2.5 * x * x));
+    } else {
+        let corner = vec2f(-0.18, -0.04);
+        let squeeze = min(segment_distance(p, vec2f(0.20, -0.20), corner),
+                          segment_distance(p, corner, vec2f(0.20, 0.12)));
+        d = min(squeeze, segment_distance(p, vec2f(-0.17, 0.22), vec2f(0.20, 0.22)));
+    }
+    return 1. - smoothstep(0.028, 0.034, d);
+}
 fn eye(pos: vec2f, side: f32, data: vec4f, base: vec3f) -> vec3f {
     var p = pos - vec2f(side * u.shape.x, 0.);
     let jelly = select(u.jelly_right, u.jelly_left, side > 0.);
@@ -45,6 +62,11 @@ fn eye(pos: vec2f, side: f32, data: vec4f, base: vec3f) -> vec3f {
     p /= vec2f(1. + jelly.z, 1. - jelly.z);
     p.x *= side;
     p.y += p.x * u.extra.z;
+    // 表情覆盖眼型，但保留每块屏的安装旋转、镜像与背景。
+    if u.background.w > 0.5 {
+        let ink = select(vec3f(0.94, 0.89, 0.98), vec3f(0.09, 0.045, 0.13), dot(base, vec3f(0.2126, 0.7152, 0.0722)) > 0.3);
+        return mix(base, ink, expression_mask(p, u.background.w));
+    }
     let motion = u.placement[7];
     let lids = u.placement[8];
     let opening = clamp(data.z, 0., 1.4);

@@ -22,7 +22,10 @@ pub trait Devices: Send {
     fn stop_chassis(&mut self) -> Result<()>;
     fn zero(&mut self, mask: u8) -> Result<()>;
     fn chassis(&mut self, t: &pb::ChassisTarget) -> Result<()>;
-    fn poll(&mut self) -> Result<()>;
+    fn waiting_for_reply(&self, _targets: &pb::Targets) -> bool {
+        false
+    }
+    fn poll(&mut self, start_arm_query: bool) -> Result<()>;
     fn snapshot(&self) -> Value;
 }
 
@@ -71,7 +74,7 @@ impl Devices for Simulated {
         self.record("chassis", json!({"mode":t.mode,"data":chassis_payload(t)}));
         Ok(())
     }
-    fn poll(&mut self) -> Result<()> {
+    fn poll(&mut self, _: bool) -> Result<()> {
         Ok(())
     }
     fn snapshot(&self) -> Value {
@@ -351,6 +354,7 @@ pub struct Hardware {
     requested_mode: i32,
     eye_cfg: ep::Config,
     eye_pose: Option<ep::Pose>,
+    eye_expression: i32,
     eye_revision: u64,
     next_neck: Instant,
     next_arm: Instant,
@@ -371,6 +375,7 @@ impl Hardware {
             requested_mode: 3,
             eye_cfg,
             eye_pose: None,
+            eye_expression: ep::Expression::Normal as i32,
             eye_revision: 0,
             next_neck: Instant::now(),
             next_arm: Instant::now(),
@@ -468,7 +473,7 @@ impl Hardware {
         }
         h.begin()?;
         h.stop()?;
-        h.poll()?;
+        h.poll(true)?;
         Ok(h)
     }
     fn board(&mut self) -> Result<&mut Bridge> {
@@ -516,6 +521,7 @@ impl Hardware {
             self.state["neck"][key] = json!({"state":states[d[1] as usize],"fault":faults[d[2] as usize],"temperature_c":d[3],
                 "position_rad":f(4),"joint_position_rad":(f(4)-axis.offset_rad)/axis.direction as f64,
                 "position_deg":f(4).to_degrees(),"velocity_rad_s":f(8),"effort":f(12),"target_rad":f(16),"output":f(20),
+                "feedback_time":SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs_f64(),
                 "effort_unit":unit,"feedback_age_ms":if u(24)==u32::MAX {None} else {Some(u(24))},"tx_failures":u(28)});
         }
         self.state["neck"]["missed_control_ticks"] =
@@ -568,6 +574,20 @@ impl Devices for Hardware {
                 .revision;
             self.eye_cfg.mode = Some(ep::Mode::External as i32);
             self.eye_pose = Some(*p);
+        }
+        if let Some(expression) = t.eye_expression {
+            let eye = self
+                .eye
+                .as_mut()
+                .ok_or_else(|| anyhow::anyhow!("眼屏未连接"))?;
+            self.rt.block_on(async {
+                tokio::time::timeout(
+                    Duration::from_millis(300),
+                    eye.set_expression(ep::ExpressionRequest { expression }),
+                )
+                .await
+            })??;
+            self.eye_expression = expression;
         }
         if let Some(b) = &t.blink {
             let eye = self
@@ -660,7 +680,14 @@ impl Devices for Hardware {
         self.state["chassis"]["ready"] = json!(ready);
         Ok(())
     }
-    fn poll(&mut self) -> Result<()> {
+    fn waiting_for_reply(&self, targets: &pb::Targets) -> bool {
+        self.arms.iter().enumerate().any(|(i, arm)| {
+            let moving = [targets.left_arm.is_some(), targets.right_arm.is_some()][i]
+                || targets.servo.is_some_and(|s| usize::from(s.right_arm) == i);
+            moving && arm.as_ref().is_some_and(|a| a.pending.is_some())
+        })
+    }
+    fn poll(&mut self, start_arm_query: bool) -> Result<()> {
         let now = Instant::now();
         if let Some(b) = &mut self.board {
             b.poll()?;
@@ -695,7 +722,10 @@ impl Devices for Hardware {
                     value;
             }
         }
-        if now >= self.next_arm && self.arms.iter().flatten().all(|a| a.pending.is_none()) {
+        if start_arm_query
+            && now >= self.next_arm
+            && self.arms.iter().flatten().all(|a| a.pending.is_none())
+        {
             let items: Vec<_> = self
                 .arms
                 .iter()
@@ -731,6 +761,15 @@ impl Devices for Hardware {
                                 .into_inner()
                                 .revision;
                     }
+                }
+                if s.expression != self.eye_expression {
+                    tokio::time::timeout(
+                        Duration::from_millis(300),
+                        eye.set_expression(ep::ExpressionRequest {
+                            expression: self.eye_expression,
+                        }),
+                    )
+                    .await??;
                 }
                 self.state["eyes"] = serde_json::to_value(s)?;
                 Ok::<_, anyhow::Error>(())

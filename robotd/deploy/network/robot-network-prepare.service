@@ -1,0 +1,11 @@
+[Unit]
+Description=恢复树莓派网络配置
+After=local-fs.target
+Before=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/robot-network prepare
+
+[Install]
+WantedBy=multi-user.target

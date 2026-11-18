@@ -1,0 +1,11 @@
+[Unit]
+Description=定期检查树莓派网络
+
+[Timer]
+OnBootSec=20
+OnUnitInactiveSec=30
+AccuracySec=1
+Unit=robot-network.service
+
+[Install]
+WantedBy=timers.target

@@ -6,7 +6,7 @@ import { Slider } from '@/components/ui/slider'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { type ChassisMode, useRemote } from '@/lib/remote'
 
-const props = defineProps<{ config: Record<string, any> | null }>()
+const props = defineProps<{ config: Record<string, any> | null, active: boolean }>()
 const remote = useRemote()
 
 // 与 robotd validation 一致的官方上限；数据库限值更小时以数据库为准。
@@ -74,6 +74,7 @@ function chassisTarget() {
 
 function startStream() {
   clearInterval(timer)
+  if (!props.active) return
   // 按住期间持续发送：底盘目标 TTL 很短，只有新指令才能维持运动。
   timer = window.setInterval(() => remote.targets(chassisTarget()), SEND_MS)
 }
@@ -104,6 +105,7 @@ async function selectMode(value: unknown) {
   await remote.targets(chassisTarget(), true)
 }
 
+watch(() => props.active, on => { if (!on && timer) stopStream() })
 watch(() => remote.controlling.value, (on) => {
   if (!on) clearInterval(timer)
 })
