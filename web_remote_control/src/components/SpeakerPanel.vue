@@ -7,6 +7,9 @@ const sounds = ref<string[]>([])
 const selected = ref('')
 const status = ref('')
 const talking = ref(false)
+const dialogue = ref(false)
+const listening = ref(false)
+const waiting = ref(false)
 const playing = ref(false)
 const volume = ref(100)
 let appliedVolume = 100
@@ -44,49 +47,73 @@ async function play() {
   catch (e) { status.value = String(e) }
   finally { playing.value = false }
 }
-function stop() {
-  generation++
+function releaseMic() {
   stream?.getTracks().forEach(track => track.stop())
   stream = undefined
   if (context) void context.close()
   context = undefined
-  if (socket?.readyState === WebSocket.OPEN) socket.send('end')
+}
+function stop() {
+  generation++
+  releaseMic()
+  if (!dialogue.value && socket?.readyState === WebSocket.OPEN) socket.send('end')
   else socket?.close()
   socket = undefined
   talking.value = false
+  dialogue.value = false
+  listening.value = false
+  waiting.value = false
 }
-async function start() {
+async function start(voice = false) {
   const id = ++generation
   talking.value = true
+  dialogue.value = voice
   status.value = '正在连接麦克风'
   try {
     if (!navigator.mediaDevices?.getUserMedia) throw Error('麦克风需要通过受信任的 HTTPS 或 localhost 打开遥控器')
     const mic = await navigator.mediaDevices.getUserMedia({audio: {channelCount: 1, echoCancellation: true}})
     if (id !== generation) { mic.getTracks().forEach(t => t.stop()); return }
     stream = mic
-    const ctx = context = new AudioContext({sampleRate: 48000})
+    const ctx = context = new AudioContext({sampleRate: voice ? 16000 : 48000})
     await ctx.resume()
     await ctx.audioWorklet.addModule('/microphone.js')
     if (id !== generation) return
-    const ws = socket = new WebSocket(location.origin.replace(/^http/, 'ws') + '/talk')
+    const ws = socket = new WebSocket(location.origin.replace(/^http/, 'ws') + (voice ? '/voice' : '/talk'))
     ws.onopen = () => ws.send(JSON.stringify({token: remote.token.value}))
     ws.onmessage = ({data}) => {
       if (id !== generation) return
+      if (voice && data !== 'ready') {
+        const msg = JSON.parse(data)
+        if (msg.error) { status.value = msg.error; stop() }
+        else if (msg.done) { stop() }
+        else if (msg.answer) status.value = '回答：' + msg.answer
+        else if (msg.transcript) status.value = '已识别：' + msg.transcript
+        else if (msg.partial) status.value = msg.partial
+        return
+      }
       if (data !== 'ready') { status.value = data; stop(); return }
       const node = new AudioWorkletNode(ctx, 'microphone')
       ctx.createMediaStreamSource(mic).connect(node)
       node.connect(ctx.destination)
       node.port.onmessage = event => {
-        if (id !== generation || ws.readyState !== WebSocket.OPEN) return
+        if (id !== generation || waiting.value || ws.readyState !== WebSocket.OPEN) return
         if (ws.bufferedAmount > 24000) { stop(); status.value = '网络拥堵，喊话已结束'; return }
         ws.send(event.data)
       }
-      status.value = '喊话中'
+      listening.value = true
+      status.value = voice ? '正在聆听' : '喊话中'
     }
     ws.onclose = () => { if (id === generation) { stop(); status.value = '喊话连接已关闭' } }
   } catch (e) { if (id === generation) { stop(); status.value = String(e) } }
 }
 function endTalk() { stop(); status.value = '喊话已结束' }
+function submitVoice() {
+  if (socket?.readyState !== WebSocket.OPEN || !context || waiting.value) { stop(); return }
+  waiting.value = true
+  releaseMic()
+  socket.send('end')
+  status.value = '正在处理…'
+}
 function hidden() { if (document.hidden && talking.value) endTalk() }
 document.addEventListener('visibilitychange', hidden)
 onUnmounted(() => { document.removeEventListener('visibilitychange', hidden); stop() })
@@ -96,7 +123,8 @@ onUnmounted(() => { document.removeEventListener('visibilitychange', hidden); st
     <label>音响 <select v-model="selected" class="rounded border p-2"><option v-for="s in sounds" :key="s">{{ s }}</option></select></label>
     <Button variant="secondary" :disabled="!selected || playing || talking" @click="play">播放</Button>
     <Button v-if="playing" variant="secondary" @click="remote.command('stop_audio').catch(() => {})">停止播放</Button>
-    <Button :disabled="playing" :variant="talking ? 'destructive' : 'default'" @click="talking ? endTalk() : start()">{{ talking ? '结束喊话' : '开始喊话' }}</Button>
+    <Button :disabled="playing || dialogue" :variant="talking && !dialogue ? 'destructive' : 'default'" @click="talking ? endTalk() : start()">{{ talking && !dialogue ? '结束喊话' : '开始喊话' }}</Button>
+    <Button :disabled="playing || (talking && !dialogue) || (dialogue && !listening) || waiting" variant="secondary" @click="dialogue ? submitVoice() : start(true)">{{ waiting ? '回答中…' : dialogue ? '说完了' : '语音对话' }}</Button>
     <span role="status" class="text-sm">{{ status }}</span>
     <label class="flex w-full items-center gap-3 text-sm">
       音量

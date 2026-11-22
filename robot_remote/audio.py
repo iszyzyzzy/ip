@@ -4,7 +4,7 @@ import sys
 import wave
 
 import grpc
-from aiohttp import WSMsgType, web
+from aiohttp import ClientSession, WSMsgType, web
 from robotd.pb import robot_pb2 as pb
 
 from . import RemoteError
@@ -90,7 +90,7 @@ def register_audio(app, gateway, directory):
             if not isinstance(hello, dict) or not gateway.authorized("Bearer " + str(hello.get("token", ""))):
                 raise ValueError("访问凭据无效")
             call = gateway.stub.PlayAudio(metadata=gateway.metadata)
-            await call.write(pb.AudioPacket(header=pb.AudioHeader(sample_rate_hz=48000, channels=1)))
+            await call.write(pb.AudioPacket(header=pb.AudioHeader(sample_rate_hz=hello.get("rate", 48000), channels=1)))
             await ws.send_str("ready")
             async for msg in ws:
                 if msg.type == WSMsgType.BINARY:
@@ -113,6 +113,36 @@ def register_audio(app, gateway, directory):
             await ws.close()
         return ws
 
+    async def conversation(request):
+        ws = web.WebSocketResponse(max_msg_size=65536, heartbeat=10)
+        await ws.prepare(request)
+        try:
+            hello = await ws.receive_json(timeout=5)
+            if not isinstance(hello, dict) or not gateway.authorized("Bearer " + str(hello.get("token", ""))):
+                raise ValueError("访问凭据无效")
+            async with ClientSession() as client, client.ws_connect("http://127.0.0.1:8091/voice") as upstream:
+                await upstream.send_json({"token": hello.get("token", "")})
+                async def forward(src, dst):
+                    async for msg in src:
+                        if msg.type == WSMsgType.TEXT:
+                            await dst.send_str(msg.data)
+                        elif msg.type == WSMsgType.BINARY:
+                            await dst.send_bytes(msg.data)
+                tasks = [asyncio.create_task(forward(ws, upstream)), asyncio.create_task(forward(upstream, ws))]
+                try:
+                    await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                finally:
+                    for task in tasks:
+                        task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+        except (OSError, ValueError, TypeError, asyncio.TimeoutError) as error:
+            if not ws.closed:
+                await ws.send_json({"error": str(error) or "语音服务连接失败"})
+        finally:
+            await ws.close()
+        return ws
+
+    app.router.add_get("/voice", conversation)
     app.router.add_get("/api/audio/presets", presets)
     app.router.add_get("/api/audio/volume", get_volume)
     app.router.add_put("/api/audio/volume", set_volume)
