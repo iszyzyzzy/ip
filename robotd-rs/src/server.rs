@@ -31,12 +31,7 @@ impl Service {
             .get("authorization")
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
-        let difference = supplied
-            .as_bytes()
-            .iter()
-            .zip(expected.as_bytes())
-            .fold(0u8, |acc, (a, b)| acc | (a ^ b));
-        if supplied.len() != expected.len() || difference != 0 {
+        if supplied != expected {
             return Err(Status::unauthenticated("访问凭据无效"));
         }
         Ok(())
