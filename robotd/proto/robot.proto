@@ -20,6 +20,7 @@ service RobotControl {
   rpc Stop(StopRequest) returns (Ack);
   rpc ZeroNeck(ZeroRequest) returns (Ack);
   rpc ListActions(Empty) returns (ActionList);
+  rpc ListSounds(Empty) returns (SoundList);
   rpc PutAction(ActionUpdate) returns (ActionRecord);
   rpc CapturePreset(PresetCapture) returns (ActionRecord);
   rpc DeleteAction(ActionDelete) returns (Ack);
@@ -31,6 +32,7 @@ service RobotControl {
   rpc StopAudio(Empty) returns (AudioStatus);
 }
 message Empty {}
+message SoundList { repeated string names = 1; }
 message Ack { uint64 revision = 1; }
 message ConfigSnapshot { uint64 revision = 1; google.protobuf.Struct config = 2; }
 message ConfigUpdate { uint64 expected_revision = 1; google.protobuf.Struct config = 2; }
@@ -83,7 +85,7 @@ message RobotState {
   google.protobuf.Struct devices = 11;
   AudioStatus audio = 12;
 }
-message ActionStep { uint32 at_ms = 1; Targets targets = 2; }
+message ActionStep { uint32 at_ms = 1; Targets targets = 2; SequenceEvent event = 3; }
 // 时间点发送目标，不做机器人逆运动学；结束、取消或失去租约后停止。
 message Action {
   string name = 1;
@@ -111,6 +113,13 @@ message PresetStep {
   string preset = 1;
   optional uint32 move_ms = 2; // 省略时沿用预设的运动时间。
   uint32 hold_ms = 3; // 运动时间结束后再停留。
+  SequenceEvent event = 4; // 与 preset 二选一。事件立即触发，hold_ms 为触发后的等待。
+}
+message SequenceEvent {
+  oneof kind {
+    eyes.v1.Expression eye_expression = 1;
+    string sound = 2; // 预制 PCM16 WAV 文件名，不含扩展名。
+  }
 }
 message PresetCapture {
   string name = 1;

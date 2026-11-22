@@ -132,6 +132,7 @@ async fn config_update_is_not_blocked_by_existing_actions() {
         name: "抬臂".into(),
         duration_ms: 300,
         steps: vec![pb::ActionStep {
+            event: None,
             at_ms: 0,
             targets: Some(pb::Targets {
                 left_arm: Some(pb::ArmTarget {
@@ -185,6 +186,7 @@ async fn action_step_delay_does_not_latch_or_drop_devices() {
             name: "点头".into(),
             duration_ms: 1000,
             steps: vec![pb::ActionStep {
+                event: None,
                 at_ms: 0,
                 targets: Some(pb::Targets {
                     neck: Some(pb::NeckTarget {

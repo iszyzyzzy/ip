@@ -10,6 +10,7 @@ async-stream = "0.3"
 clap = { version = "4", features = ["derive"] }
 crossbeam-channel = "0.5"
 fs2 = "0.4"
+hound = "3.5"
 hyper-util = { version = "0.1", features = ["tokio"] }
 pbjson = "0.9"
 pbjson-types = "0.9"

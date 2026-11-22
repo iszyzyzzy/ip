@@ -75,6 +75,14 @@ APP 的麦克风音轨使用 **sendonly**，SDP 须包含 Opus。开始喊话前
 
 编辑已有序列时，用 `list_actions` 返回的该动作 revision 填写 `expected_revision`。`motion_curve` 可选 `SERVO_NATIVE`（默认，舵机自行到位）、`S_CURVE`（三次缓入缓出）或 `S_CURVE_STRONG`（七次缓入缓出，起步和收尾更慢）。曲线作用于同一手臂的相邻目标。每侧首次到位沿用该步运动时间，眼屏与颈部在步骤开始时更新一次。改变曲线强度保留姿态端点、运动时长和停留时长。
 
+序列项可以是运动预设 `preset`，也可以是一次性事件 `event`。事件可选 `eye_expression` 或 `sound`，可带 `hold_ms` 指定触发后多久进入下一项。省略即继续，事件不接收 `move_ms`。要边挥手边说话，可将语音事件放在挥手预设之前：
+
+```json
+{"name":"招手问候","sequence":{"motion_curve":"S_CURVE","steps":[{"event":{"eye_expression":"HAPPY"}},{"event":{"sound":"问候"}},{"preset":"2"},{"preset":"3"},{"preset":"2"},{"event":{"eye_expression":"NORMAL"}}]}}
+```
+
+`rpc.v1` 的 `list_sounds` 接受 `{}` 并返回 `{"names":["问候"]}`。文件为车端的 `问候.wav`，支持 PCM16 单声道或双声道。robotd 默认读取 `/var/lib/robot-remote/sounds`，可用服务环境变量 `ROBOTD_SOUNDS_DIR` 指向已有音库。语音与喊话共用播放器，已有声音播放时跳过新的语音事件并写入 robotd 日志。序列自然结束可播放尾音，取消或释放控制权会停止动作语音。
+
 ## 启动与切换
 
 项目根目录执行 `cargo build --release --locked --manifest-path robot_wan/Cargo.toml`，两份二进制位于 `robot_wan/target/release/`。Debian 系 Linux 构建需要 `pkg-config`、`libasound2-dev` 和 C 编译工具链。systemd 示例从 `/opt/robot-wan/bin/` 启动。公网可以用反向代理终止 TLS，转发 `/v1/signal` 的 WebSocket 到本机 8765。用 [coturn 示例](deploy/turnserver.conf.example) 配置 TURN 并开放输入端口及 UDP 中继范围。信令进程从 `WAN_ROBOT_TOKEN`、`WAN_OPERATOR_TOKEN`、`WAN_TURN_SECRET` 读取凭据，最后一个与 coturn 的 `static-auth-secret` 相同。生产示例命令：

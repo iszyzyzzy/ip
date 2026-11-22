@@ -37,10 +37,10 @@ pub fn compile(
         name: action.name.clone(),
         ..Default::default()
     };
-    let mut append = |preset: &pb::ActionPreset, move_ms: u32, hold_ms: u32| -> Result<()> {
+    let mut append = |step: pb::ActionStep, move_ms: u32, hold_ms: u32| -> Result<()> {
         plan.steps.push(pb::ActionStep {
             at_ms: plan.duration_ms,
-            targets: Some(preset_step(preset, move_ms)?),
+            ..step
         });
         plan.duration_ms = plan
             .duration_ms
@@ -49,8 +49,14 @@ pub fn compile(
             .context("动作总时长超限")?;
         Ok(())
     };
+    let pose = |preset: &pb::ActionPreset, ms| -> Result<_> {
+        Ok(pb::ActionStep {
+            targets: Some(preset_step(preset, ms)?),
+            ..Default::default()
+        })
+    };
     match definition {
-        Definition::Preset(preset) => append(preset, preset.move_ms, 0)?,
+        Definition::Preset(preset) => append(pose(preset, preset.move_ms)?, preset.move_ms, 0)?,
         Definition::Sequence(sequence) => {
             pb::MotionCurve::try_from(sequence.motion_curve).context("未知的手臂运动曲线")?;
             ensure!(
@@ -58,21 +64,33 @@ pub fn compile(
                 "序列步数须在 1～1000 内"
             );
             for step in &sequence.steps {
+                if let Some(event) = &step.event {
+                    ensure!(
+                        step.preset.is_empty() && step.move_ms.is_none(),
+                        "事件不能同时指定预设或运动时间"
+                    );
+                    append(
+                        pb::ActionStep {
+                            event: Some(event.clone()),
+                            ..Default::default()
+                        },
+                        0,
+                        step.hold_ms,
+                    )?;
+                    continue;
+                }
                 ensure!(step.preset != action.name, "序列不能引用自身");
                 let entry =
                     lookup(&step.preset).with_context(|| format!("读取预设 {}", step.preset))?;
                 let Some(Definition::Preset(preset)) = entry.definition else {
                     anyhow::bail!("{} 不是动作预设", step.preset);
                 };
-                append(
-                    &preset,
-                    step.move_ms.unwrap_or(preset.move_ms),
-                    step.hold_ms,
-                )?;
+                let ms = step.move_ms.unwrap_or(preset.move_ms);
+                append(pose(&preset, ms)?, ms, step.hold_ms)?;
             }
         }
     }
-    validation::action(&plan, cfg)?;
+    validation::sequence_plan(&plan, cfg)?;
     Ok(plan)
 }
 

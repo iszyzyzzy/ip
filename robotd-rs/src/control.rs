@@ -210,6 +210,7 @@ struct Engine {
     lease: Option<pb::Lease>,
     lease_end: Instant,
     action: Option<ActiveAction>,
+    action_sound: Option<Arc<Session>>,
     chassis: Option<pb::ChassisTarget>,
     chassis_end: Instant,
     next_chassis: Instant,
@@ -242,6 +243,7 @@ impl Engine {
             lease: None,
             lease_end: Instant::now(),
             action: None,
+            action_sound: None,
             chassis: None,
             chassis_end: Instant::now(),
             next_chassis: Instant::now(),
@@ -361,6 +363,12 @@ impl Engine {
         Ok(())
     }
     fn stop_motion(&mut self, revoke: bool) {
+        if let Some(sound) = self.action_sound.take() {
+            sound.cancel();
+        }
+        self.finish_motion(revoke);
+    }
+    fn finish_motion(&mut self, revoke: bool) {
         self.action = None;
         self.chassis = None;
         self.stopped = true;
@@ -685,16 +693,33 @@ impl Engine {
                 .filter(|s| elapsed >= s.at_ms as u128 && (active.relative || !finished))
                 .cloned()
             {
-                let mut targets = step.targets.unwrap();
-                if active.curve != pb::MotionCurve::ServoNative {
-                    active.segment = ArmSegment::begin(&mut active.previous, &targets, step.at_ms);
-                    if let Some(segment) = &mut active.segment {
-                        segment.sample(0, active.curve, &mut targets);
-                    }
-                }
                 active.next += 1;
                 let relative = active.relative;
-                if self.apply(&targets).is_err() {
+                let result = match step.event.and_then(|event| event.kind) {
+                    Some(pb::sequence_event::Kind::Sound(name)) => {
+                        match self.audio.play_sound(&name, &self.rt) {
+                            Ok(s) => self.action_sound = Some(s),
+                            Err(e) => eprintln!("跳过动作语音 {name}：{e}"),
+                        }
+                        Ok(())
+                    }
+                    Some(pb::sequence_event::Kind::EyeExpression(e)) => self.apply(&pb::Targets {
+                        eye_expression: Some(e),
+                        ..Default::default()
+                    }),
+                    None => {
+                        let mut targets = step.targets.unwrap();
+                        if active.curve != pb::MotionCurve::ServoNative {
+                            active.segment =
+                                ArmSegment::begin(&mut active.previous, &targets, step.at_ms);
+                            if let Some(segment) = &mut active.segment {
+                                segment.sample(0, active.curve, &mut targets);
+                            }
+                        }
+                        self.apply(&targets)
+                    }
+                };
+                if result.is_err() {
                     return;
                 }
                 if relative {
@@ -703,7 +728,8 @@ impl Engine {
                         Instant::now() - Duration::from_millis(step.at_ms as u64);
                 }
             } else if finished {
-                self.stop_motion(false);
+                // 自然结束时允许尾音播完，随后取消或释放控制权仍可停止它。
+                self.finish_motion(false);
             }
         }
         if let Some(c) = self.chassis {

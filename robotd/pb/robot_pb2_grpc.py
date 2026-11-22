@@ -100,6 +100,11 @@ class RobotControlStub:
                 request_serializer=robot__pb2.Empty.SerializeToString,
                 response_deserializer=robot__pb2.ActionList.FromString,
                 _registered_method=True)
+        self.ListSounds = channel.unary_unary(
+                '/robot.v1.RobotControl/ListSounds',
+                request_serializer=robot__pb2.Empty.SerializeToString,
+                response_deserializer=robot__pb2.SoundList.FromString,
+                _registered_method=True)
         self.PutAction = channel.unary_unary(
                 '/robot.v1.RobotControl/PutAction',
                 request_serializer=robot__pb2.ActionUpdate.SerializeToString,
@@ -226,6 +231,12 @@ class RobotControlServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ListSounds(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def PutAction(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -342,6 +353,11 @@ def add_RobotControlServicer_to_server(servicer, server):
                     servicer.ListActions,
                     request_deserializer=robot__pb2.Empty.FromString,
                     response_serializer=robot__pb2.ActionList.SerializeToString,
+            ),
+            'ListSounds': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListSounds,
+                    request_deserializer=robot__pb2.Empty.FromString,
+                    response_serializer=robot__pb2.SoundList.SerializeToString,
             ),
             'PutAction': grpc.unary_unary_rpc_method_handler(
                     servicer.PutAction,
@@ -736,6 +752,33 @@ class RobotControl:
             '/robot.v1.RobotControl/ListActions',
             robot__pb2.Empty.SerializeToString,
             robot__pb2.ActionList.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListSounds(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/robot.v1.RobotControl/ListSounds',
+            robot__pb2.Empty.SerializeToString,
+            robot__pb2.SoundList.FromString,
             options,
             channel_credentials,
             insecure,

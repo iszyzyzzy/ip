@@ -164,6 +164,12 @@ impl RobotControl for Service {
         self.auth(&r)?;
         reply!(self.hub.request(Op::Actions, false).await?, Actions)
     }
+    async fn list_sounds(&self, r: Request<pb::Empty>) -> Result<Response<pb::SoundList>, Status> {
+        self.auth(&r)?;
+        Ok(Response::new(pb::SoundList {
+            names: crate::audio::sound_names()?,
+        }))
+    }
     async fn put_action(
         &self,
         r: Request<pb::ActionUpdate>,

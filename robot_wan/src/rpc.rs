@@ -58,6 +58,7 @@ impl Robot {
             "update_config" => invoke!(update_config, ConfigUpdate, ConfigSnapshot),
             "update_eyes" => invoke!(update_eyes, EyesUpdate, ConfigSnapshot),
             "list_actions" => invoke!(list_actions, Empty, ActionList),
+            "list_sounds" => invoke!(list_sounds, Empty, SoundList),
             "put_action" => invoke!(put_action, ActionUpdate, ActionRecord),
             "delete_action" => invoke!(delete_action, ActionDelete, Ack),
             "capture_preset" => invoke!(capture_preset, PresetCapture, ActionRecord),
@@ -91,7 +92,7 @@ mod tests {
         let mut store = robotd::store::Store::open(":memory:", None).unwrap();
         for curve in ["SERVO_NATIVE", "S_CURVE", "S_CURVE_STRONG"] {
             let request = json!({"action":{"name":curve,"sequence":{
-                "motion_curve":curve,"steps":[{"preset":"2"},{"preset":"3"}]
+                "motion_curve":curve,"steps":[{"event":{"sound":"问候"}},{"preset":"2"},{"event":{"eye_expression":"NORMAL"}}]
             }}});
             let update = input::<pb::ActionUpdate>("ActionUpdate", request).unwrap();
             let action = update.action.unwrap();
@@ -103,6 +104,9 @@ mod tests {
             };
             let result = output("ActionRecord", &record).unwrap();
             assert_eq!(result["action"]["sequence"]["motion_curve"], curve);
+            let steps = &result["action"]["sequence"]["steps"];
+            assert_eq!(steps[0]["event"]["sound"], "问候");
+            assert_eq!(steps[2]["event"]["eye_expression"], "NORMAL");
         }
     }
 }
