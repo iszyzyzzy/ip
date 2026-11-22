@@ -24,6 +24,8 @@ pub mod robot {
 }
 pub use robot::v1 as pb;
 
+pub const PROTO_DESCRIPTOR: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/robot.bin"));
+
 pub fn to_struct(value: &serde_json::Value) -> pbjson_types::Struct {
     serde_json::from_value(value.clone()).expect("设备状态必须为 JSON 对象")
 }

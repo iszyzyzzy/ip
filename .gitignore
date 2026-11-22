@@ -11,6 +11,7 @@ build/
 dist/
 robotd/generated-config.json
 robotd-rs/target/
+robot_wan/target/
 .ruff_cache/
 .env
 .env.*

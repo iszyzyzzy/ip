@@ -1136,7 +1136,7 @@ dev = [
 remote = [
     { name = "aiohttp" },
 ]
-wan = [
+wan-test = [
     { name = "aiohttp" },
     { name = "aiortc" },
 ]
@@ -1144,15 +1144,15 @@ wan = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", marker = "extra == 'remote'", specifier = ">=3.12,<4" },
-    { name = "aiohttp", marker = "extra == 'wan'", specifier = ">=3.12,<4" },
-    { name = "aiortc", marker = "extra == 'wan'", specifier = ">=1.13,<2" },
+    { name = "aiohttp", marker = "extra == 'wan-test'", specifier = ">=3.12,<4" },
+    { name = "aiortc", marker = "extra == 'wan-test'", specifier = ">=1.13,<2" },
     { name = "grpcio", specifier = ">=1.81,<2" },
     { name = "grpcio-tools", marker = "extra == 'dev'", specifier = ">=1.81,<1.82" },
     { name = "protobuf", specifier = ">=6.33.5,<7" },
     { name = "pyserial", specifier = ">=3.5,<4" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.12" },
 ]
-provides-extras = ["dev", "remote", "wan"]
+provides-extras = ["dev", "remote", "wan-test"]
 
 [[package]]
 name = "ruff"

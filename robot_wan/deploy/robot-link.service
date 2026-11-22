@@ -8,7 +8,7 @@ After=network-online.target robotd.service robot-remote.service
 User=iprpi
 SupplementaryGroups=input video
 EnvironmentFile=/etc/robot-wan/link.env
-ExecStart=/opt/robot-wan/.venv/bin/robot-link --signal wss://robot.example.com/v1/signal --robot-id car-01
+ExecStart=/opt/robot-wan/bin/robot-link --signal wss://robot.example.com/v1/signal --robot-id car-01
 Restart=on-failure
 RestartSec=2
 

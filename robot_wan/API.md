@@ -33,7 +33,7 @@
 | `state.v1` | `ordered=false, maxRetransmits=0` | 只有车端发状态快照 |
 | `stop.v1` | `ordered=true`，可靠 | 独立急停请求和应答 |
 
-APP 的麦克风音轨使用 **sendonly**，协商标准 WebRTC 音频，推荐 Opus。开始喊话前保持静音。相机视频使用 **recvonly**，与车端协商 VP8 或 H.264，不指定时由 SDP 决定。若无需某种媒体，可在 offer 中省略该媒体段。`capabilities` 表示车端配置能力，运行时状态见 `state.v1`。
+APP 的麦克风音轨使用 **sendonly**，SDP 须包含 Opus。开始喊话前保持静音。相机视频使用 **recvonly**，SDP 须包含 VP8。若无需某种媒体，可在 offer 中省略该媒体段。`capabilities` 表示车端配置能力，运行时状态见 `state.v1`。
 
 ## 命令与状态
 
@@ -67,7 +67,7 @@ APP 的麦克风音轨使用 **sendonly**，协商标准 WebRTC 音频，推荐 
 
 ## 启动与切换
 
-项目根目录执行 `uv sync --extra wan`。公网可以用反向代理终止 TLS，转发 `/v1/signal` 的 WebSocket 到本机 8765。用 [coturn 示例](deploy/turnserver.conf.example) 配置 TURN 并开放输入端口及 UDP 中继范围。信令进程从 `WAN_ROBOT_TOKEN`、`WAN_OPERATOR_TOKEN`、`WAN_TURN_SECRET` 读取凭据，最后一个与 coturn 的 `static-auth-secret` 相同。生产示例命令：
+项目根目录执行 `cargo build --release --locked --manifest-path robot_wan/Cargo.toml`，两份二进制位于 `robot_wan/target/release/`。Debian 系 Linux 构建需要 `pkg-config`、`libasound2-dev` 和 C 编译工具链。systemd 示例从 `/opt/robot-wan/bin/` 启动。公网可以用反向代理终止 TLS，转发 `/v1/signal` 的 WebSocket 到本机 8765。用 [coturn 示例](deploy/turnserver.conf.example) 配置 TURN 并开放输入端口及 UDP 中继范围。信令进程从 `WAN_ROBOT_TOKEN`、`WAN_OPERATOR_TOKEN`、`WAN_TURN_SECRET` 读取凭据，最后一个与 coturn 的 `static-auth-secret` 相同。生产示例命令：
 
 ```sh
 robot-wan-signal --robot-id car-01 \
@@ -75,7 +75,7 @@ robot-wan-signal --robot-id car-01 \
   --turn 'turn:turn.example.com:3478?transport=udp'
 ```
 
-限制 UDP 的环境可选 `turns:turn.example.com:5349?transport=tcp` 并配置证书。车端配置相同的 `WAN_ROBOT_TOKEN` 和所需的 `ROBOTD_API_TOKEN`。树莓派端需要 FFmpeg，车端账号需要摄像头读取权限。配置好车载相机时使用：
+Rust 车端的 TURN 连接使用 UDP，部署网络须允许车端访问 TURN 的 UDP 端口。车端配置相同的 `WAN_ROBOT_TOKEN` 和所需的 `ROBOTD_API_TOKEN`。视频需要带 libvpx 的 FFmpeg，车端账号需要摄像头读取权限。配置好车载相机时使用：
 
 ```sh
 robot-link --robot-id car-01 --signal wss://robot.example.com/v1/signal \
@@ -86,4 +86,4 @@ robot-link --robot-id car-01 --signal wss://robot.example.com/v1/signal \
 
 上线时安装并修改 [车端 systemd 模板](deploy/robot-link.service) 的信令地址、相机参数和凭据文件。随后执行 `systemctl disable --now robot-remote.service` 并启用 `robot-link.service`。两个服务配置为互斥，避免同时读取蓝牙手柄。旧网页服务文件和资产留作回退，蓝牙手柄绑定沿用运行账号的 `~/.config/robot-remote/gamepad.json`。公网信令另有 [systemd 模板](deploy/robot-wan-signal.service)。
 
-本地通过 `uv run --extra wan python -m unittest discover -s robot_wan/tests -v` 验证。测试使用已编译的 robotd、FFmpeg 合成相机和模拟麦克风。跨网 NAT/TURN、实车 UVC 与 ALSA 端到端延迟应在各自的实际环境中验证。
+本地先构建 `robotd-rs` 和 `robot_wan` 的 debug 二进制，再用 `uv run --extra wan-test python -m unittest discover -s robot_wan/tests -v` 启动测试对端。测试使用 FFmpeg 合成相机和模拟麦克风。跨网 NAT/TURN、实车 UVC 与 ALSA 端到端延迟应在各自的实际环境中验证。
