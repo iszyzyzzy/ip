@@ -105,9 +105,7 @@ def create_app(models):
                         await speaker.send_json({"token": hello["token"], "rate": voice.sample_rate})
                         if await speaker.receive_str(timeout=10) != "ready":
                             raise RuntimeError("音响未就绪")
-                        # 短答一次合成，避免短招呼先播完后扬声器空等下一句。
-                        passages = [answer] if len(answer) <= 80 else re.split(r"(?<=[。！？!?])", answer)
-                        for sentence in passages:
+                        for sentence in re.split(r"(?<=[。！？!?])", answer):
                             if not sentence.strip():
                                 continue
                             samples = await asyncio.to_thread(mandarin.generate, sentence)
