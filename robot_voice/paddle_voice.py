@@ -30,7 +30,6 @@ class PaddleVoice:
         self.english = cmudict.dict()
 
     def mandarin_phones(self, text):
-        text = cn2an.transform(text, "an2cn")
         options = dict(neutral_tone_with_five=True, errors=lambda chars: ["sp"])
         initials = self.pinyin.lazy_pinyin(text, style=Style.INITIALS, **options)
         finals = self.pinyin.lazy_pinyin(text, style=Style.FINALS_TONE3, **options)
@@ -52,8 +51,14 @@ class PaddleVoice:
 
     def generate(self, text):
         phones = []
-        for part in re.split(r"([A-Za-z]+(?:'[A-Za-z]+)*)", text):
+        text = cn2an.transform(text, "an2cn")
+        for part in re.split(r"([A-Za-z]+(?:'[A-Za-z]+)*|[，。！？、；：,.!?;:]+)", text):
+            part = part.strip()
             if not part:
+                continue
+            if re.fullmatch(r"[，。！？、；：,.!?;:]+", part):
+                if phones and phones[-1] != "sp":
+                    phones.append("sp")
                 continue
             if not part[0].isascii() or not part[0].isalpha():
                 phones.extend(self.mandarin_phones(part))
