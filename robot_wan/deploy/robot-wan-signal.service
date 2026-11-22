@@ -1,0 +1,13 @@
+[Unit]
+Description=Robot WebRTC signaling
+After=network.target
+
+[Service]
+User=robot-signal
+EnvironmentFile=/etc/robot-wan/signal.env
+ExecStart=/opt/robot-wan/.venv/bin/robot-wan-signal --robot-id car-01 --stun stun:turn.example.com:3478 --turn turn:turn.example.com:3478?transport=udp
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

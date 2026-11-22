@@ -12,14 +12,17 @@ dependencies = ["grpcio>=1.81,<2", "protobuf>=6.33.5,<7", "pyserial>=3.5,<4"]
 [project.optional-dependencies]
 dev = ["grpcio-tools>=1.81,<1.82", "ruff>=0.12"]
 remote = ["aiohttp>=3.12,<4"]
+wan = ["aiohttp>=3.12,<4", "aiortc>=1.13,<2"]
 
 [project.scripts]
 robotctl = "robotd.client:main"
 robot-audio = "robotd.audio_client:main"
 robot-remote = "robot_remote.server:main"
+robot-wan-signal = "robot_wan.signal:main"
+robot-link = "robot_wan.link:main"
 
 [tool.setuptools]
-packages = ["robotd", "robotd.pb", "robot_remote", "h7.tools"]
+packages = ["robotd", "robotd.pb", "robot_remote", "robot_wan", "h7.tools"]
 include-package-data = false
 
 [tool.setuptools.package-data]
