@@ -150,6 +150,7 @@ fn capture_uses_fresh_joint_angles_and_applies_step_duration() {
     let sequence = pb::Action {
         name: "挥手".into(),
         definition: Some(pb::action::Definition::Sequence(pb::ActionSequence {
+            motion_curve: pb::MotionCurve::ServoNative as i32,
             steps: vec![
                 pb::PresetStep {
                     preset: preset.name.clone(),

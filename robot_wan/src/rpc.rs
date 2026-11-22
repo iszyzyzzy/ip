@@ -81,6 +81,32 @@ fn descriptor(name: &str) -> prost_reflect::MessageDescriptor {
         .expect("RPC 消息描述符")
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn action_sequence_curve_round_trips_through_wan_json() {
+        let mut store = robotd::store::Store::open(":memory:", None).unwrap();
+        for curve in ["SERVO_NATIVE", "S_CURVE", "S_CURVE_STRONG"] {
+            let request = json!({"action":{"name":curve,"sequence":{
+                "motion_curve":curve,"steps":[{"preset":"2"},{"preset":"3"}]
+            }}});
+            let update = input::<pb::ActionUpdate>("ActionUpdate", request).unwrap();
+            let action = update.action.unwrap();
+            let revision = store.put(&action, update.expected_revision).unwrap();
+            let record = pb::ActionRecord {
+                action: Some(store.action(curve).unwrap()),
+                revision,
+                deleted: false,
+            };
+            let result = output("ActionRecord", &record).unwrap();
+            assert_eq!(result["action"]["sequence"]["motion_curve"], curve);
+        }
+    }
+}
+
 fn input<M: Message + Default>(name: &str, value: Value) -> Result<M, Status> {
     let msg = DynamicMessage::deserialize(descriptor(name), value)
         .map_err(|e| Status::invalid_argument(e.to_string()))?;

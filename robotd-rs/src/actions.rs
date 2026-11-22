@@ -52,6 +52,7 @@ pub fn compile(
     match definition {
         Definition::Preset(preset) => append(preset, preset.move_ms, 0)?,
         Definition::Sequence(sequence) => {
+            pb::MotionCurve::try_from(sequence.motion_curve).context("未知的手臂运动曲线")?;
             ensure!(
                 (1..=1000).contains(&sequence.steps.len()),
                 "序列步数须在 1～1000 内"

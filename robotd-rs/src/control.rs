@@ -131,6 +131,69 @@ struct ActiveAction {
     start: Instant,
     next: usize,
     relative: bool,
+    curve: pb::MotionCurve,
+    previous: pb::Targets,
+    segment: Option<ArmSegment>,
+}
+
+struct ArmSegment {
+    at_ms: u32,
+    duration: u32,
+    next_ms: u32,
+    arms: [Option<(pb::ArmTarget, pb::ArmTarget)>; 2],
+}
+
+impl ArmSegment {
+    fn begin(previous: &mut pb::Targets, targets: &pb::Targets, at_ms: u32) -> Option<Self> {
+        let mut duration = 0;
+        let mut track = |last: &mut Option<pb::ArmTarget>, goal: &Option<pb::ArmTarget>| {
+            let goal = goal.as_ref()?;
+            let start = last.replace(goal.clone())?;
+            if start.joint_rad == goal.joint_rad || goal.duration_ms <= 40 {
+                return None;
+            }
+            duration = goal.duration_ms;
+            Some((start, goal.clone()))
+        };
+        let arms = [
+            track(&mut previous.left_arm, &targets.left_arm),
+            track(&mut previous.right_arm, &targets.right_arm),
+        ];
+        (duration > 0).then_some(Self {
+            at_ms,
+            duration,
+            next_ms: 0,
+            arms,
+        })
+    }
+
+    fn sample(&mut self, elapsed: u32, curve: pb::MotionCurve, targets: &mut pb::Targets) {
+        let end = elapsed.saturating_add(40).min(self.duration);
+        let t = f64::from(end) / f64::from(self.duration);
+        let weight = match curve {
+            pb::MotionCurve::SCurveStrong => {
+                t.powi(4) * (35.0 + t * (-84.0 + t * (70.0 - 20.0 * t)))
+            }
+            _ => t * t * (3.0 - 2.0 * t),
+        };
+        for (pair, target) in self
+            .arms
+            .iter()
+            .zip([&mut targets.left_arm, &mut targets.right_arm])
+        {
+            if let Some((start, goal)) = pair {
+                let mut sample = goal.clone();
+                if end < self.duration {
+                    for (q, from) in sample.joint_rad.iter_mut().zip(&start.joint_rad) {
+                        *q = from + (*q - from) * weight;
+                    }
+                }
+                sample.duration_ms = end.saturating_sub(elapsed).max(1);
+                *target = Some(sample);
+            }
+        }
+        self.next_ms = end;
+    }
 }
 
 struct Engine {
@@ -558,6 +621,12 @@ impl Engine {
                     start: Instant::now(),
                     next: 0,
                     relative: action.definition.is_some(),
+                    curve: match &action.definition {
+                        Some(pb::action::Definition::Sequence(s)) => s.motion_curve(),
+                        _ => pb::MotionCurve::ServoNative,
+                    },
+                    previous: Default::default(),
+                    segment: None,
                 });
                 Ok(self.ack())
             }
@@ -590,17 +659,42 @@ impl Engine {
         if let Some(active) = &mut self.action {
             let elapsed = active.start.elapsed().as_millis();
             let finished = elapsed >= active.plan.duration_ms as u128;
-            if let Some(step) = active
+            if let Some(segment) = &mut active.segment {
+                let local = (elapsed as u32).saturating_sub(segment.at_ms);
+                if local >= segment.next_ms {
+                    let mut targets = pb::Targets::default();
+                    segment.sample(local, active.curve, &mut targets);
+                    let end = segment.at_ms + segment.duration;
+                    let final_sample = segment.next_ms == segment.duration;
+                    if final_sample {
+                        active.segment = None;
+                    }
+                    if self.apply(&targets).is_err() {
+                        return;
+                    }
+                    if final_sample {
+                        let remaining = (end as u128).saturating_sub(elapsed).max(1);
+                        self.action.as_mut().unwrap().start =
+                            Instant::now() - Duration::from_millis(end as u64 - remaining as u64);
+                    }
+                }
+            } else if let Some(step) = active
                 .plan
                 .steps
                 .get(active.next)
                 .filter(|s| elapsed >= s.at_ms as u128 && (active.relative || !finished))
                 .cloned()
             {
-                let targets = step.targets.as_ref().unwrap();
+                let mut targets = step.targets.unwrap();
+                if active.curve != pb::MotionCurve::ServoNative {
+                    active.segment = ArmSegment::begin(&mut active.previous, &targets, step.at_ms);
+                    if let Some(segment) = &mut active.segment {
+                        segment.sample(0, active.curve, &mut targets);
+                    }
+                }
                 active.next += 1;
                 let relative = active.relative;
-                if self.apply(targets).is_err() {
+                if self.apply(&targets).is_err() {
                     return;
                 }
                 if relative {

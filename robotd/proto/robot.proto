@@ -98,7 +98,15 @@ message ActionPreset {
   Targets targets = 1;
   uint32 move_ms = 2;
 }
-message ActionSequence { repeated PresetStep steps = 1; }
+enum MotionCurve {
+  SERVO_NATIVE = 0;
+  S_CURVE = 1;
+  S_CURVE_STRONG = 2;
+}
+message ActionSequence {
+  repeated PresetStep steps = 1;
+  MotionCurve motion_curve = 2;
+}
 message PresetStep {
   string preset = 1;
   optional uint32 move_ms = 2; // 省略时沿用预设的运动时间。

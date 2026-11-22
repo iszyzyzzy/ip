@@ -65,6 +65,16 @@ APP 的麦克风音轨使用 **sendonly**，SDP 须包含 Opus。开始喊话前
 
 喊话开始后开放麦克风，松手发送 `talk.end` 并静音。车端把 Opus 解码为 48 kHz 单声道 PCM16，交给 robotd。现有播放器占用时返回 `AUDIO_BUSY`，已有流不会被抢占。正常松手保留短尾音，急停或会话关闭取消喊话。状态中的 `talk.phase` 可见 `idle`、`accepted`、`completed`、`failed`、`offline`，失败带 `code` 和 `message`。相机状态为 `inactive`、`starting`、`live` 或 `offline`。画面是否冻结由 APP 实际收帧时间判定。
 
+## 保存动作序列
+
+通过 `rpc.v1` 的 `put_action` 写入整条序列。下面的请求使用已保存的预设 2 和 3 创建挥手动作。
+
+```json
+{"id":12,"method":"put_action","params":{"expected_revision":"0","action":{"name":"挥手","sequence":{"motion_curve":"S_CURVE_STRONG","steps":[{"preset":"2","move_ms":4000},{"preset":"3","move_ms":1600},{"preset":"2","move_ms":1600,"hold_ms":300}]}}}}
+```
+
+编辑已有序列时，用 `list_actions` 返回的该动作 revision 填写 `expected_revision`。`motion_curve` 可选 `SERVO_NATIVE`（默认，舵机自行到位）、`S_CURVE`（三次缓入缓出）或 `S_CURVE_STRONG`（七次缓入缓出，起步和收尾更慢）。曲线作用于同一手臂的相邻目标。每侧首次到位沿用该步运动时间，眼屏与颈部在步骤开始时更新一次。改变曲线强度保留姿态端点、运动时长和停留时长。
+
 ## 启动与切换
 
 项目根目录执行 `cargo build --release --locked --manifest-path robot_wan/Cargo.toml`，两份二进制位于 `robot_wan/target/release/`。Debian 系 Linux 构建需要 `pkg-config`、`libasound2-dev` 和 C 编译工具链。systemd 示例从 `/opt/robot-wan/bin/` 启动。公网可以用反向代理终止 TLS，转发 `/v1/signal` 的 WebSocket 到本机 8765。用 [coturn 示例](deploy/turnserver.conf.example) 配置 TURN 并开放输入端口及 UDP 中继范围。信令进程从 `WAN_ROBOT_TOKEN`、`WAN_OPERATOR_TOKEN`、`WAN_TURN_SECRET` 读取凭据，最后一个与 coturn 的 `static-auth-secret` 相同。生产示例命令：

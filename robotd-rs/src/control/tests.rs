@@ -199,6 +199,9 @@ async fn action_step_delay_does_not_latch_or_drop_devices() {
         start: Instant::now() - Duration::from_millis(500),
         next: 0,
         relative: false,
+        curve: pb::MotionCurve::ServoNative,
+        previous: Default::default(),
+        segment: None,
     });
 
     e.tick();
@@ -207,4 +210,37 @@ async fn action_step_delay_does_not_latch_or_drop_devices() {
     assert!(e.devices.is_some());
     assert!(!e.stopped);
     assert_eq!(e.action.as_ref().unwrap().next, 1);
+}
+#[test]
+fn arm_curve_samples_between_known_poses_and_lands_after_a_late_tick() {
+    let pose = |value| pb::Targets {
+        left_arm: Some(pb::ArmTarget {
+            joint_rad: vec![value; 4],
+            duration_ms: 400,
+        }),
+        ..Default::default()
+    };
+    for (curve, quarter) in [
+        (pb::MotionCurve::SCurve, 0.15625),
+        (pb::MotionCurve::SCurveStrong, 0.070556640625),
+    ] {
+        let mut previous = pb::Targets::default();
+        assert!(ArmSegment::begin(&mut previous, &pose(0.0), 0).is_none());
+        let mut segment = ArmSegment::begin(&mut previous, &pose(1.0), 400).unwrap();
+        let mut sample = pb::Targets::default();
+        segment.sample(60, curve, &mut sample);
+        assert_eq!(
+            sample.left_arm.as_ref().unwrap().joint_rad,
+            vec![quarter; 4]
+        );
+        segment.sample(420, curve, &mut sample);
+        assert_eq!(
+            sample.left_arm.unwrap(),
+            pb::ArmTarget {
+                joint_rad: vec![1.0; 4],
+                duration_ms: 1
+            }
+        );
+        assert!(sample.right_arm.is_none());
+    }
 }
