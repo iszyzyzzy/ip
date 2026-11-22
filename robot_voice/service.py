@@ -10,6 +10,7 @@ from pathlib import Path
 from aiohttp import ClientSession, ClientTimeout, WSMsgType, web
 import numpy as np
 import sherpa_onnx as sherpa
+from paddle_voice import PaddleVoice
 
 log = logging.getLogger("robot-voice")
 
@@ -41,6 +42,7 @@ def recognize(model, stream, samples, final=False):
 
 def create_app(models):
     model, voice = load_models(models)
+    mandarin = PaddleVoice(models)
     turns = itertools.count(1)
     lock = asyncio.Lock()
 
@@ -106,8 +108,14 @@ def create_app(models):
                         for sentence in re.split(r"(?<=[。！？!?])", answer):
                             if not sentence.strip():
                                 continue
-                            audio = await asyncio.to_thread(voice.generate, sentence, sid=3)
-                            pcm = (np.clip(audio.samples, -1, 1) * 32767).astype("<i2").tobytes()
+                            samples = await asyncio.to_thread(mandarin.generate, sentence)
+                            engine = "PaddleSpeech"
+                            if samples is None:
+                                audio = await asyncio.to_thread(voice.generate, sentence, sid=3)
+                                samples = audio.samples
+                                engine = "Kokoro"
+                            log.info("轮次=%s 合成=%s 音频=%.2fs", turn, engine, len(samples) / voice.sample_rate)
+                            pcm = (np.clip(samples, -1, 1) * 32767).astype("<i2").tobytes()
                             for offset in range(0, len(pcm), 4096):
                                 await speaker.send_bytes(pcm[offset:offset + 4096])
                         await speaker.send_str("end")
