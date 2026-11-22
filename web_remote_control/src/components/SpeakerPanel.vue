@@ -8,24 +8,39 @@ const selected = ref('')
 const status = ref('')
 const talking = ref(false)
 const playing = ref(false)
+const volume = ref(100)
+let appliedVolume = 100
+const volumeReady = ref(false)
 let generation = 0
 let stream: MediaStream | undefined
 let context: AudioContext | undefined
 let socket: WebSocket | undefined
-async function api(path: string, method = 'GET') {
-  const result = await fetch('/api/audio/presets' + path, { method, headers: {Authorization: 'Bearer ' + remote.token.value} })
+async function api(path: string, method = 'GET', body?: string) {
+  const result = await fetch('/api/audio/' + path, { method, body, headers: {Authorization: 'Bearer ' + remote.token.value, 'Content-Type': 'application/json'} })
   const data = await result.json()
   if (!result.ok) throw Error(data.error?.message || result.statusText)
   return data
 }
 watch(remote.online, async online => {
+  volumeReady.value = false
   if (!online) { stop(); return }
-  try { sounds.value = await api(''); selected.value = sounds.value[0] || '' }
+  try {
+    volume.value = appliedVolume = await api('volume')
+    volumeReady.value = true
+    sounds.value = await api('presets')
+    selected.value = sounds.value[0] || ''
+  }
   catch (e) { status.value = String(e) }
 }, { immediate: true })
+async function saveVolume() {
+  volumeReady.value = false
+  try { appliedVolume = await api('volume', 'PUT', JSON.stringify(volume.value)) }
+  catch (e) { status.value = String(e); volume.value = appliedVolume }
+  finally { volumeReady.value = true }
+}
 async function play() {
   playing.value = true
-  try { const r = await api('/' + encodeURIComponent(selected.value), 'POST'); status.value = r.phase === 'completed' ? '播放完毕' : r.phase }
+  try { const r = await api('presets/' + encodeURIComponent(selected.value), 'POST'); status.value = r.phase === 'completed' ? '播放完毕' : r.phase }
   catch (e) { status.value = String(e) }
   finally { playing.value = false }
 }
@@ -83,5 +98,10 @@ onUnmounted(() => { document.removeEventListener('visibilitychange', hidden); st
     <Button v-if="playing" variant="secondary" @click="remote.command('stop_audio').catch(() => {})">停止播放</Button>
     <Button :disabled="playing" :variant="talking ? 'destructive' : 'default'" @click="talking ? endTalk() : start()">{{ talking ? '结束喊话' : '开始喊话' }}</Button>
     <span role="status" class="text-sm">{{ status }}</span>
+    <label class="flex w-full items-center gap-3 text-sm">
+      音量
+      <input v-model.number="volume" type="range" min="0" max="100" step="1" class="h-10 min-w-0 flex-1" :disabled="!volumeReady" @change="saveVolume">
+      <span class="w-10 text-right tabular-nums">{{ volume }}%</span>
+    </label>
   </section>
 </template>
