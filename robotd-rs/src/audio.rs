@@ -346,13 +346,15 @@ impl Session {
                     s.status.submitted_frames += frames;
                 }
             }
-            // null 声卡也必须按采样率节流，否则静音填充会占满 CPU。
-            output_at += Duration::from_secs_f64(self.ms(bytes.len()) / 1000.0);
-            while !self.cancelled() && Instant::now() < output_at {
-                self.pause(output_at.saturating_duration_since(Instant::now()));
-            }
-            if Instant::now().duration_since(output_at) > Duration::from_millis(20) {
-                output_at = Instant::now();
+            if simulated {
+                // 模拟声卡没有真实音频时钟，需要按采样率节流，避免静音填充占满 CPU。
+                output_at += Duration::from_secs_f64(self.ms(bytes.len()) / 1000.0);
+                while !self.cancelled() && Instant::now() < output_at {
+                    self.pause(output_at.saturating_duration_since(Instant::now()));
+                }
+                if Instant::now().duration_since(output_at) > Duration::from_millis(20) {
+                    output_at = Instant::now();
+                }
             }
         }
     }
@@ -401,10 +403,6 @@ impl Sink {
             pcm.sw_params(&sw)?;
             drop(sw);
             let buffer_ms = frames as f64 * 1000.0 / rate as f64;
-            anyhow::ensure!(
-                buffer_ms + cfg.max_buffer_ms as f64 <= 200.5,
-                "声卡实际缓冲 {buffer_ms:.1} ms，加软件队列超过 200 ms，请调整 ALSA 设备或缓冲配置"
-            );
             Ok(Self::Alsa {
                 pcm,
                 buffer_ms,

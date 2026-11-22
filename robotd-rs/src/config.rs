@@ -1,4 +1,4 @@
-use anyhow::{Result, bail, ensure};
+use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -252,21 +252,17 @@ impl Config {
             !a.device.is_empty() && !a.device.contains('\0'),
             "ALSA 设备名无效"
         );
+        ensure!(a.device_buffer_ms >= 10, "ALSA 缓冲至少 10 ms");
+        ensure!(a.max_buffer_ms >= 10, "音频队列上限至少 10 ms");
         ensure!(
-            (10..=100).contains(&a.device_buffer_ms),
-            "ALSA 缓冲应为 10..100 ms"
-        );
-        ensure!(
-            (10..=200).contains(&a.prebuffer_ms) && a.prebuffer_ms <= a.max_buffer_ms,
-            "音频预缓冲必须在 10..200 ms 且不大于队列上限"
+            (10..=a.max_buffer_ms).contains(&a.prebuffer_ms),
+            "音频预缓冲必须在 10..={} ms 内",
+            a.max_buffer_ms
         );
         ensure!(
             (10..=a.max_buffer_ms).contains(&a.rebuffer_ms),
-            "音频恢复缓冲无效"
-        );
-        ensure!(
-            a.max_buffer_ms + a.device_buffer_ms <= 200,
-            "软件与 ALSA 缓冲配置之和不能超过 200 ms"
+            "音频恢复缓冲必须在 10..={} ms 内",
+            a.max_buffer_ms
         );
         Ok(())
     }
@@ -274,27 +270,6 @@ impl Config {
 
 pub fn validate_eye_config(v: &Value) -> Result<()> {
     let _: crate::eyes::v1::Config = serde_json::from_value(v.clone())?;
-    let template: Value = serde_json::from_str(include_str!("../../robotd/default-config.json"))?;
-    fn shape(v: &Value, t: &Value) -> Result<()> {
-        if let Some(o) = t.as_object() {
-            let Some(actual) = v.as_object() else {
-                bail!("眼屏配置对象无效");
-            };
-            ensure!(actual.len() == o.len(), "眼屏配置字段不完整");
-            for (k, value) in o {
-                shape(
-                    actual
-                        .get(k)
-                        .ok_or_else(|| anyhow::anyhow!("缺少眼屏字段 {k}"))?,
-                    value,
-                )?;
-            }
-        } else if t.is_boolean() {
-            ensure!(v.is_boolean(), "眼屏布尔字段无效");
-        }
-        Ok(())
-    }
-    shape(v, &template["eyes"]["settings"])?;
     for (path, lo, hi) in [
         ("scale", 0.5, 1.5),
         ("spacing", 0.38, 0.7),
@@ -335,20 +310,33 @@ pub fn validate_eye_config(v: &Value) -> Result<()> {
         ("background/g", 0.0, 1.0),
         ("background/b", 0.0, 1.0),
     ] {
-        let x = v
-            .pointer(&format!("/{path}"))
-            .and_then(Value::as_f64)
-            .ok_or_else(|| anyhow::anyhow!("眼屏字段 {path} 必须为数值"))?;
-        range(x, lo, hi, path)?;
+        if let Some(raw) = v.pointer(&format!("/{path}"))
+            && !raw.is_null()
+        {
+            let x = raw
+                .as_f64()
+                .ok_or_else(|| anyhow::anyhow!("眼屏字段 {path} 必须为数值"))?;
+            range(x, lo, hi, path)?;
+        }
     }
-    let port = v["tracking_port"].as_u64().unwrap_or(0);
-    ensure!((1024..=65535).contains(&port), "tracking_port 无效");
-    let ip = v["phone_ip"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("phone_ip 必须为字符串"))?;
-    ensure!(
-        ip.is_empty() || ip.parse::<std::net::Ipv4Addr>().is_ok(),
-        "phone_ip 无效"
-    );
+    if let Some(raw) = v.get("tracking_port")
+        && !raw.is_null()
+    {
+        let port = raw
+            .as_u64()
+            .ok_or_else(|| anyhow::anyhow!("tracking_port 无效"))?;
+        ensure!((1024..=65535).contains(&port), "tracking_port 无效");
+    }
+    if let Some(raw) = v.get("phone_ip")
+        && !raw.is_null()
+    {
+        let ip = raw
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("phone_ip 必须为字符串"))?;
+        ensure!(
+            ip.is_empty() || ip.parse::<std::net::Ipv4Addr>().is_ok(),
+            "phone_ip 无效"
+        );
+    }
     Ok(())
 }
