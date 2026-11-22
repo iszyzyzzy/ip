@@ -4,6 +4,7 @@ import { Hand, OctagonX, Power, Unlock } from '@lucide/vue'
 import OfflinePanel from '@/components/OfflinePanel.vue'
 import GamepadPanel from '@/components/GamepadPanel.vue'
 import CompanionPanel from '@/components/CompanionPanel.vue'
+import SpeakerPanel from '@/components/SpeakerPanel.vue'
 import ActionsPanel from '@/components/ActionsPanel.vue'
 import ChassisPanel from '@/components/ChassisPanel.vue'
 import HeadPanel from '@/components/HeadPanel.vue'
@@ -175,6 +176,7 @@ function submitToken() {
           <StatusPanel />
         </TabsContent>
       </Tabs>
+      <SpeakerPanel />
     </main>
 
     <!-- 急停固定在拇指区，无需控制权即可触发，任何连接状态下都显示。 -->
