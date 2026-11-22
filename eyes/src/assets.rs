@@ -76,6 +76,8 @@ impl Default for Motion {
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Art {
+    #[serde(skip)]
+    pub eye_bounds: [f32; 4],
     pub half_width: f32,
     pub upper_height: f32,
     pub lower_height: f32,
@@ -197,7 +199,7 @@ pub struct Pack {
 impl Pack {
     pub fn load(root: &Path) -> AssetResult<Self> {
         let path = root.join("eye.json");
-        let art: Art = serde_json::from_slice(
+        let mut art: Art = serde_json::from_slice(
             &std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?,
         )?;
         art.validate()?;
@@ -210,9 +212,31 @@ impl Pack {
         )
         .validate(&module)?;
         let mut pixels = Vec::with_capacity((TEXTURE_SIZE * TEXTURE_SIZE * 4) as usize * LAYERS);
-        for name in &art.textures {
+        for (index, name) in art.textures.iter().enumerate() {
             let path = root.join(name);
-            pixels.extend(load_texture(&path).map_err(|e| format!("{}: {e}", path.display()))?);
+            let layer = load_texture(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            if index == 3 {
+                // 眼白四周有透明留白，表情需要对齐可见眼眶。
+                let n = TEXTURE_SIZE as usize;
+                let (mut x0, mut y0, mut x1, mut y1) = (n, n, 0, 0);
+                for (i, _) in layer.chunks_exact(4).enumerate().filter(|(_, p)| p[3] >= 128) {
+                    x0 = x0.min(i % n);
+                    y0 = y0.min(i / n);
+                    x1 = x1.max(i % n + 1);
+                    y1 = y1.max(i / n + 1);
+                }
+                art.eye_bounds = if x1 > x0 && y1 > y0 {
+                    [
+                        (x0 + x1) as f32 * 0.5,
+                        (y0 + y1) as f32 * 0.5,
+                        (x1 - x0) as f32,
+                        (y1 - y0) as f32,
+                    ].map(|v| v / n as f32)
+                } else {
+                    [0.5, 0.5, 0.55, 0.41]
+                };
+            }
+            pixels.extend(layer);
         }
         Ok(Self {
             art,

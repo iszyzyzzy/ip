@@ -14,7 +14,7 @@ pub struct Uniforms {
     pub right: [f32; 4],
     pub shape: [f32; 4],      // separation, iris size, expression, roll
     pub iris: [f32; 4],       // RGB、安装顺时针旋转的90度倍数；保持现有uniform布局。
-    pub background: [f32; 4], // RGB、表情编号
+    pub background: [f32; 4],
     pub extra: [f32; 4],      // glow, pupil, tilt, reserved
     pub layers_a: [f32; 4],
     pub layers_b: [f32; 4],
@@ -23,6 +23,8 @@ pub struct Uniforms {
     pub contour: [f32; 4],
     pub detail: [f32; 4],
     pub placement: [[f32; 4]; LAYERS + 2], // 各图层摆放 + 运动参数，来自 eye.json
+    pub eye_bounds: [f32; 4],
+    pub expression_mix: [f32; 4],
 }
 
 pub struct Resources {

@@ -171,6 +171,7 @@ struct EyesApp {
     external: [[f32; 4]; 2],
     external_roll: f32,
     eye_expression: pb::Expression,
+    expression_mix: [f32; 2],
     revision: u64,
     rpc_status: String,
     asset_root: PathBuf,
@@ -393,6 +394,7 @@ impl EyesApp {
             external: [[0., 0., 1., 0.]; 2],
             external_roll: 0.,
             eye_expression: pb::Expression::Normal,
+            expression_mix: [0.; 2],
             revision: 0,
             rpc_status,
             settings,
@@ -478,6 +480,15 @@ impl EyesApp {
         replies
     }
     fn advance(&mut self, t: f32, dt: f32, mouse: [f32; 2]) {
+        let blend = 1. - (-22. * dt).exp();
+        let expressions = [pb::Expression::Happy, pb::Expression::Excited];
+        for (weight, expression) in self.expression_mix.iter_mut().zip(expressions) {
+            let target = if self.eye_expression == expression { 1. } else { 0. };
+            *weight += (target - *weight) * blend;
+            if (target - *weight).abs() < 0.002 {
+                *weight = target;
+            }
+        }
         let live = self.settings.mode == Mode::Tracking && self.receiver.live();
         let mut target = [[0., 0., 1., 0.]; 2];
         let mut roll = 0.;
@@ -555,7 +566,7 @@ impl EyesApp {
                 s.background[0],
                 s.background[1],
                 s.background[2],
-                self.eye_expression as i32 as f32,
+                0.,
             ],
             extra: [s.glow, s.pupil, s.tilt, 0.],
             layers_a: layer_flags[0],
@@ -565,6 +576,8 @@ impl EyesApp {
             contour: art_shape[0],
             detail: art_shape[1],
             placement: self.art.placement_uniforms(),
+            eye_bounds: self.art.eye_bounds,
+            expression_mix: [self.expression_mix[0], self.expression_mix[1], 0., 0.],
         }
     }
     fn controls(&mut self, ctx: &egui::Context, t: f32) {

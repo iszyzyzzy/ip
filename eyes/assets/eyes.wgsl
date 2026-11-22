@@ -7,6 +7,7 @@ struct Params {
     contour: vec4f, detail: vec4f,
     // 0..6 各图层 offset.xy / scale / gaze；7 = gaze_range.xy, blink_pivot, canvas；8 = upper_lid_y, lower_lid_y
     placement: array<vec4f, 9>,
+    eye_bounds: vec4f, expression_mix: vec4f,
 }
 @group(0) @binding(0) var<uniform> u: Params;
 @group(0) @binding(2) var layers: texture_2d_array<f32>;
@@ -48,9 +49,8 @@ fn expression_mask(p: vec2f, expression: f32) -> f32 {
         d = length(p - vec2f(x, -0.085 + 2.5 * x * x));
     } else {
         let corner = vec2f(-0.18, -0.04);
-        let squeeze = min(segment_distance(p, vec2f(0.20, -0.20), corner),
-                          segment_distance(p, corner, vec2f(0.20, 0.12)));
-        d = min(squeeze, segment_distance(p, vec2f(-0.17, 0.22), vec2f(0.20, 0.22)));
+        d = min(segment_distance(p, vec2f(0.20, -0.20), corner),
+                segment_distance(p, corner, vec2f(0.20, 0.12)));
     }
     return 1. - smoothstep(0.028, 0.034, d);
 }
@@ -62,11 +62,6 @@ fn eye(pos: vec2f, side: f32, data: vec4f, base: vec3f) -> vec3f {
     p /= vec2f(1. + jelly.z, 1. - jelly.z);
     p.x *= side;
     p.y += p.x * u.extra.z;
-    // 表情覆盖眼型，但保留每块屏的安装旋转、镜像与背景。
-    if u.background.w > 0.5 {
-        let ink = select(vec3f(0.94, 0.89, 0.98), vec3f(0.09, 0.045, 0.13), dot(base, vec3f(0.2126, 0.7152, 0.0722)) > 0.3);
-        return mix(base, ink, expression_mask(p, u.background.w));
-    }
     let motion = u.placement[7];
     let lids = u.placement[8];
     let opening = clamp(data.z, 0., 1.4);
@@ -108,6 +103,16 @@ fn eye(pos: vec2f, side: f32, data: vec4f, base: vec3f) -> vec3f {
     color = over(color, layer(place(upper_p, 4, vec2f(0.), side, true, 1.), 4));
     let brow_p = p + vec2f(0., data.w * 0.05);
     color = over(color, layer(place(brow_p, 6, vec2f(0.), side, true, 1.), 6));
+    let weights = u.expression_mix.xy;
+    if weights.x + weights.y > 0. {
+        let uv = place(p - gaze * u.placement[0].w, 3, vec2f(0.), side, true, 1.);
+        let local = (uv - u.eye_bounds.xy) / u.eye_bounds.zw;
+        // 两个符号的笔画外框各自映射到原眼眶。
+        let happy = expression_mask(local * vec2f(0.54, 0.21) + vec2f(0., -0.013), 1.);
+        let excited = expression_mask(local * vec2f(0.44, 0.38) + vec2f(0.01, -0.04), 2.);
+        let ink = select(vec3f(0.94, 0.89, 0.98), vec3f(0.09, 0.045, 0.13), dot(u.background.rgb, vec3f(0.2126, 0.7152, 0.0722)) > 0.3);
+        return mix(color, base, weights.x + weights.y) + (ink - base) * dot(weights, vec2f(happy, excited));
+    }
     return color;
 }
 @fragment fn fs_main(v: Vertex) -> @location(0) vec4f {
