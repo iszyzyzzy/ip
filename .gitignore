@@ -20,3 +20,8 @@ robot_wan/target/
 *.pcapng
 # 名片包含个人联系方式，不随公开源码发布。
 /screen/公司名片业务商务对接.jpg
+client/node_modules/
+client/dist/
+client/src-tauri/target/
+
+.history/

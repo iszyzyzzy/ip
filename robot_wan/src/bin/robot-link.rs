@@ -1,3 +1,5 @@
+#[path = "robot_link/voice_channel.rs"]
+mod voice_channel;
 use std::{
     collections::HashSet,
     sync::{Arc, Mutex, atomic::Ordering},
@@ -328,6 +330,10 @@ impl Session {
             let sid = channel_sid.clone();
             Box::pin(async move {
                 let label = channel.label();
+                if label == "voice.v1" {
+                    voice_channel::attach(channel, control.robot.clone()).await;
+                    return;
+                }
                 let ordered = matches!(label, "rpc.v1" | "stop.v1");
                 let valid = (ordered || matches!(label, "state.v1" | "drive.v1"))
                     && channel.ordered() == ordered

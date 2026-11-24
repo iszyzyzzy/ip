@@ -1,4 +1,5 @@
 """车载中文语音对话。机器人动作与语音对话独立。"""
+from contextlib import asynccontextmanager
 import asyncio
 import itertools
 import logging
@@ -11,6 +12,7 @@ from aiohttp import ClientSession, ClientTimeout, WSMsgType, web
 import numpy as np
 import sherpa_onnx as sherpa
 from paddle_voice import PaddleVoice
+import remote_tts
 
 log = logging.getLogger("robot-voice")
 
@@ -40,6 +42,25 @@ def recognize(model, stream, samples, final=False):
     return model.get_result(stream).strip()
 
 
+@asynccontextmanager
+async def playback(client, ws, hello, rate):
+    if hello.get("playback") == "stream":
+        await ws.send_json({"rate": rate})
+        yield ws
+        await ws.send_json({"audio_end": True})
+        result = await ws.receive_str(timeout=90)
+    else:
+        async with client.ws_connect("http://127.0.0.1:8080/talk") as speaker:
+            await speaker.send_json({"token": hello["token"], "rate": rate})
+            if await speaker.receive_str(timeout=10) != "ready":
+                raise RuntimeError("音响未就绪")
+            yield speaker
+            await speaker.send_str("end")
+            result = await speaker.receive_str(timeout=90)
+    if result != "completed":
+        raise RuntimeError("播放失败：" + result)
+
+
 def create_app(models):
     model, voice = load_models(models)
     mandarin = PaddleVoice(models)
@@ -59,6 +80,12 @@ def create_app(models):
             started = time.monotonic()
             try:
                 hello = await ws.receive_json(timeout=5)
+                backend = hello.get("tts") or "local"
+                if backend not in ("local", "deepseek", "xfyun"):
+                    raise ValueError("未知的语音合成后端")
+                if backend == "xfyun":
+                    for name in ("XFYUN_APP_ID", "XFYUN_API_KEY", "XFYUN_API_SECRET"):
+                        remote_tts.required(name)
                 stream = model.create_stream()
                 await ws.send_str("ready")
                 count = 0
@@ -101,12 +128,19 @@ def create_app(models):
                     log.info("轮次=%s 回答=%s", turn, answer)
                     await ws.send_json({"answer": answer})
                     stage = "合成播放"
-                    async with client.ws_connect("http://127.0.0.1:8080/talk") as speaker:
-                        await speaker.send_json({"token": hello["token"], "rate": voice.sample_rate})
-                        if await speaker.receive_str(timeout=10) != "ready":
-                            raise RuntimeError("音响未就绪")
+                    rate = {"local": voice.sample_rate, "deepseek": 24000, "xfyun": 16000}[backend]
+                    async with playback(client, ws, hello, rate) as speaker:
                         for sentence in re.split(r"(?<=[。！？!?])", answer):
                             if not sentence.strip():
+                                continue
+                            if backend != "local":
+                                synthesize = remote_tts.deepseek if backend == "deepseek" else remote_tts.xfyun
+                                received = False
+                                async for pcm in synthesize(client, sentence):
+                                    await speaker.send_bytes(pcm)
+                                    received = True
+                                if not received:
+                                    raise RuntimeError(f"{backend} 未返回音频")
                                 continue
                             samples = await asyncio.to_thread(mandarin.generate, sentence)
                             engine = "PaddleSpeech"
@@ -118,10 +152,6 @@ def create_app(models):
                             pcm = (np.clip(samples, -1, 1) * 32767).astype("<i2").tobytes()
                             for offset in range(0, len(pcm), 4096):
                                 await speaker.send_bytes(pcm[offset:offset + 4096])
-                        await speaker.send_str("end")
-                        result = await speaker.receive_str(timeout=90)
-                        if result != "completed":
-                            raise RuntimeError("播放失败：" + result)
                 log.info("轮次=%s 播放完成 总耗时=%.2fs", turn, time.monotonic() - started)
                 await ws.send_json({"done": True})
             except Exception as error:

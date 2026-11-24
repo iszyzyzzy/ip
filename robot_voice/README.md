@@ -1,5 +1,7 @@
 # 车载中文语音对话
 
+桌面客户端连接机器人后，在底部操作栏点「AI 对话」，选「开始说话」，说完点「说完了」。客户端使用设置中选定的麦克风，每轮最多 60 秒。识别文字和回答显示在对话框内，车端 robot-link 将逐句合成的语音送入 robotd 混音器。客户端与车端通过当前 WebRTC 会话的有序通道 voice.v1 通信。
+
 从 HTTPS 遥控器点「语音对话」，说完点「说完了」。浏览器将 16 kHz 单声道 PCM 发到遥控网关的 `/voice`。网关校验访问凭据后转发到本机 8091。Paraformer 流式识别中英文，DeepSeek 接收本轮识别文本，本地合成回答，通过既有音响通道播放。每次对话独立，音量沿用网页音量条。
 
 实机目录为 `~/robot-voice`，Python 环境安装 `sherpa-onnx==2.0.3`、`numpy` 和 `aiohttp>=3.12,<4`。
@@ -19,3 +21,12 @@ DEEPSEEK_MODEL=deepseek-flash
 ```
 
 凭据文件由 root 持有，权限 0600。修改后运行 `sudo systemctl restart robot-voice`。用 `journalctl -u robot-voice -f -o cat` 查看每轮识别文本、模型回答、播放完成或失败阶段。
+
+桌面客户端的「AI 对话 → 合成后端」可选择车载本地、DeepSeek 或讯飞，选择会保存在当前客户端。识别仍在车上完成，远程合成只发送回答文本，返回的 PCM 按句流入车端混音器。DeepSeek 复用现有的 `DEEPSEEK_API_KEY`，可用 `DEEPSEEK_TTS_VOICE` 指定 stella 或 tide。讯飞需在车端 `/etc/robot-voice.env` 配置下列变量，发音人应已在该应用开通。修改后重启 robot-voice。安装服务时将 remote_tts.py 放在 service.py 同目录。
+
+```ini
+XFYUN_APP_ID=
+XFYUN_API_KEY=
+XFYUN_API_SECRET=
+XFYUN_VOICE=xiaoyan
+```
