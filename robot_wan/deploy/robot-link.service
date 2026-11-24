@@ -1,0 +1,16 @@
+[Unit]
+Description=Robot WebRTC link
+Wants=network-online.target robotd.service
+Conflicts=robot-remote.service
+After=network-online.target robotd.service robot-remote.service
+
+[Service]
+User=iprpi
+SupplementaryGroups=input video
+EnvironmentFile=/etc/robot-wan/link.env
+ExecStart=/opt/robot-wan/bin/robot-link --signal wss://robot.example.com/v1/signal --robot-id car-01
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

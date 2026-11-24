@@ -10,6 +10,7 @@ import logging
 import os
 from pathlib import Path
 import secrets
+import ssl
 import time
 from urllib.parse import urlsplit
 
@@ -27,6 +28,7 @@ MAX_MESSAGE_SIZE = 1024 * 1024
 # HTTP 与 WebSocket 共用命令表，避免两种入口的控制语义发生漂移。
 COMMANDS = {
     "get_state": ("GetState", pb.Empty, False),
+    "stop_audio": ("StopAudio", pb.Empty, False),
     "get_config": ("GetConfig", pb.Empty, False),
     "update_config": ("UpdateConfig", pb.ConfigUpdate, False),
     "update_eyes": ("UpdateEyes", pb.EyesUpdate, False),
@@ -491,6 +493,8 @@ def create_app(target="127.0.0.1:50051", *, robotd_token="", api_token="",
     app.on_shutdown.append(shutdown)
     app.router.add_get("/healthz", health)
     app.router.add_get("/ws", gateway.websocket)
+    from .audio import register_audio
+    register_audio(app, gateway, state_dir / "sounds")
     for method, path, command in ROUTES:
         app.router.add_route(method, path, command_handler(command))
     if web_root:
@@ -524,7 +528,24 @@ def main():
     except (ValueError, OSError) as error:
         parser.error(str(error))
     log.info("启动网页遥控服务：http://%s:%s，robotd：%s", args.host, args.port, args.robotd)
-    web.run_app(app, host=args.host, port=args.port, print=None, shutdown_timeout=3)
+    cert = os.environ.get("ROBOT_REMOTE_TLS_CERT")
+    if cert:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(cert, os.environ["ROBOT_REMOTE_TLS_KEY"])
+        async def serve():
+            runner = web.AppRunner(app, handle_signals=True, shutdown_timeout=3)
+            await runner.setup()
+            try:
+                await web.TCPSite(runner, args.host, args.port).start()
+                await web.TCPSite(runner, args.host, int(os.getenv("ROBOT_REMOTE_TLS_PORT", "8443")),
+                                  ssl_context=context).start()
+                await asyncio.Event().wait()
+            finally:
+                await runner.cleanup()
+        with suppress(web.GracefulExit, KeyboardInterrupt):
+            asyncio.run(serve())
+    else:
+        web.run_app(app, host=args.host, port=args.port, print=None, shutdown_timeout=3)
 
 
 if __name__ == "__main__":

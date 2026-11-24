@@ -150,13 +150,16 @@ fn capture_uses_fresh_joint_angles_and_applies_step_duration() {
     let sequence = pb::Action {
         name: "挥手".into(),
         definition: Some(pb::action::Definition::Sequence(pb::ActionSequence {
+            motion_curve: pb::MotionCurve::ServoNative as i32,
             steps: vec![
                 pb::PresetStep {
+                    event: None,
                     preset: preset.name.clone(),
                     move_ms: Some(900),
                     hold_ms: 1100,
                 },
                 pb::PresetStep {
+                    event: None,
                     preset: preset.name.clone(),
                     move_ms: None,
                     hold_ms: 250,
@@ -177,4 +180,31 @@ fn capture_uses_fresh_joint_angles_and_applies_step_duration() {
         .unwrap();
     assert_eq!(arm.duration_ms, 900);
     assert!((arm.joint_rad[3] - 0.3).abs() < 1e-9);
+}
+
+#[test]
+fn events_share_a_motion_boundary_and_can_finish_a_sequence() {
+    let mut cfg = Config::defaults();
+    cfg.audio.enabled = true;
+    cfg.eyes.enabled = true;
+    let action: pb::Action = serde_json::from_value(json!({"name":"问候","sequence":{"steps":[
+        {"event":{"sound":"你好"}}, {"preset":"笑眼","move_ms":300},
+        {"event":{"eye_expression":"HAPPY"},"hold_ms":50}, {"event":{"eye_expression":"NORMAL"}}
+    ]}}))
+    .unwrap();
+    let pose: pb::Action = serde_json::from_value(
+        json!({"name":"笑眼","preset":{"targets":{"eye_expression":"HAPPY"},"move_ms":500}}),
+    )
+    .unwrap();
+    let plan = robotd::actions::compile(&action, &cfg, |_| Ok(pose.clone())).unwrap();
+    assert_eq!(plan.duration_ms, 350);
+    assert_eq!(
+        plan.steps.iter().map(|s| s.at_ms).collect::<Vec<_>>(),
+        [0, 0, 300, 350]
+    );
+    let bad: pb::Action = serde_json::from_value(json!({"name":"问候","sequence":{"steps":[
+        {"event":{"sound":"你好"},"move_ms":20}
+    ]}}))
+    .unwrap();
+    assert!(robotd::actions::compile(&bad, &cfg, |_| unreachable!()).is_err());
 }

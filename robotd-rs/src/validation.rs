@@ -124,6 +124,14 @@ pub fn targets(t: &pb::Targets, cfg: &Config) -> Result<()> {
     Ok(())
 }
 pub fn action(a: &pb::Action, cfg: &Config) -> Result<()> {
+    validate_plan(a, cfg, false)
+}
+
+pub fn sequence_plan(a: &pb::Action, cfg: &Config) -> Result<()> {
+    validate_plan(a, cfg, true)
+}
+
+fn validate_plan(a: &pb::Action, cfg: &Config, sequence: bool) -> Result<()> {
     ensure!(
         !a.name.is_empty()
             && a.name.chars().count() <= 64
@@ -133,21 +141,38 @@ pub fn action(a: &pb::Action, cfg: &Config) -> Result<()> {
         "动作名称无效"
     );
     ensure!(
-        (1..=600000).contains(&a.duration_ms) && (1..=1000).contains(&a.steps.len()),
+        a.duration_ms <= 600000 && (1..=1000).contains(&a.steps.len()),
         "动作时长或时间点数量无效"
     );
     let mut last = None;
     for s in &a.steps {
         ensure!(
-            s.at_ms < a.duration_ms && last.is_none_or(|x| s.at_ms > x),
+            (s.at_ms < a.duration_ms
+                || (sequence && s.event.is_some() && s.at_ms == a.duration_ms))
+                && last.is_none_or(|x| s.at_ms > x || (sequence && s.at_ms == x)),
             "动作时间点必须递增且早于结束时间"
         );
-        targets(
-            s.targets
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("缺少动作目标"))?,
-            cfg,
-        )?;
+        match (&s.targets, &s.event) {
+            (Some(t), None) => targets(t, cfg)?,
+            (None, Some(event)) => match &event.kind {
+                Some(pb::sequence_event::Kind::EyeExpression(e)) => targets(
+                    &pb::Targets {
+                        eye_expression: Some(*e),
+                        ..Default::default()
+                    },
+                    cfg,
+                )?,
+                Some(pb::sequence_event::Kind::Sound(name)) => {
+                    ensure!(cfg.audio.enabled, "音频未启用");
+                    ensure!(
+                        !name.is_empty() && !name.contains(['/', '\\', ':', '\0']),
+                        "语音名须为音频文件的基本名称"
+                    );
+                }
+                None => anyhow::bail!("缺少事件类型"),
+            },
+            _ => anyhow::bail!("动作步骤须指定一个目标或事件"),
+        }
         last = Some(s.at_ms);
     }
     Ok(())

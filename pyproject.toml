@@ -12,6 +12,7 @@ dependencies = ["grpcio>=1.81,<2", "protobuf>=6.33.5,<7", "pyserial>=3.5,<4"]
 [project.optional-dependencies]
 dev = ["grpcio-tools>=1.81,<1.82", "ruff>=0.12"]
 remote = ["aiohttp>=3.12,<4"]
+wan-test = ["aiohttp>=3.12,<4", "aiortc>=1.13,<2"]
 
 [project.scripts]
 robotctl = "robotd.client:main"

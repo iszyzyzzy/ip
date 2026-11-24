@@ -1,0 +1,13 @@
+# 地址、公网端口和证书按部署填写。
+listening-port=3478
+tls-listening-port=5349
+min-port=49160
+max-port=49200
+# 服务端存在公网地址映射时设置 external-ip=PUBLIC_IP/PRIVATE_IP。
+realm=turn.example.com
+use-auth-secret
+static-auth-secret=REPLACE_WITH_SHARED_SECRET
+no-cli
+no-tcp-relay
+# cert=/etc/letsencrypt/live/turn.example.com/fullchain.pem
+# pkey=/etc/letsencrypt/live/turn.example.com/privkey.pem

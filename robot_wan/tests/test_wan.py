@@ -1,0 +1,171 @@
+import asyncio
+from contextlib import AsyncExitStack, suppress
+import json
+import os
+from pathlib import Path
+import shutil
+import socket
+import subprocess
+import unittest
+
+from aiohttp import ClientSession, WSServerHandshakeError
+from aiortc import AudioStreamTrack, RTCConfiguration, RTCPeerConnection, RTCSessionDescription
+import grpc
+
+from robot_remote.server import Gateway
+from robotd.pb import robot_pb2 as pb, robot_pb2_grpc as pg
+from robotd.tests.support import RustDaemon
+
+
+FFMPEG = os.getenv("FFMPEG") or shutil.which("ffmpeg")
+CHANNELS = {"rpc.v1": True, "drive.v1": False, "state.v1": False, "stop.v1": True}
+BINARIES = Path(os.environ.get("WAN_TEST_BIN", Path(__file__).resolve().parents[1] / "target/debug"))
+
+
+def launch(name, *args, **environment):
+    suffix = ".exe" if os.name == "nt" else ""
+    return subprocess.Popen([str(BINARIES / (name + suffix)), *args],
+                            env={**os.environ, **environment})
+
+
+async def stop_process(process):
+    if process.poll() is None:
+        process.terminate()
+    await asyncio.to_thread(process.wait, 5)
+
+
+class WanTests(unittest.IsolatedAsyncioTestCase):
+    @unittest.skipUnless(FFMPEG, "需要 FFmpeg 生成测试视频")
+    async def test_webrtc_control_media_and_disconnect(self):
+        daemon = await asyncio.to_thread(RustDaemon)
+        self.addAsyncCleanup(asyncio.to_thread, daemon.close)
+        target = f"127.0.0.1:{daemon.port}"
+        async with AsyncExitStack() as stack:
+            grpc_channel = await stack.enter_async_context(grpc.aio.insecure_channel(target))
+            gateway = Gateway(target)
+            gateway.stub = pg.RobotControlStub(grpc_channel)
+            config = await gateway.execute("get_config", {})
+            config["config"]["audio"]["enabled"] = True
+            await gateway.execute("update_config", {"expected_revision": config["revision"],
+                                                    "config": config["config"]})
+            with socket.socket() as listener:
+                listener.bind(("127.0.0.1", 0))
+                port = str(listener.getsockname()[1])
+            signal = launch("robot-wan-signal", "--port", port, WAN_ROBOT_TOKEN="robot",
+                            WAN_OPERATOR_TOKEN="operator")
+            stack.push_async_callback(stop_process, signal)
+            url = f"ws://127.0.0.1:{port}/v1/signal"
+            http = await stack.enter_async_context(ClientSession())
+            async with asyncio.timeout(5):
+                while True:
+                    try:
+                        async with http.get(f"http://127.0.0.1:{port}/healthz") as reply:
+                            self.assertEqual(await reply.json(), {"ok": True})
+                            break
+                    except OSError:
+                        await asyncio.sleep(.025)
+            with self.assertRaises(WSServerHandshakeError) as denied:
+                await http.ws_connect(url)
+            self.assertEqual(denied.exception.status, 401)
+            vehicle = launch("robot-link", "--signal", url, "--robotd", target, "--camera",
+                             "testsrc=size=640x480:rate=15", "--camera-format", "lavfi",
+                             "--ffmpeg", FFMPEG, WAN_ROBOT_TOKEN="robot")
+            stack.push_async_callback(stop_process, vehicle)
+            ws = await stack.enter_async_context(
+                http.ws_connect(url, headers={"Authorization": "Bearer operator"}))
+            async with asyncio.timeout(5):
+                while True:
+                    await ws.send_json({"type": "robots.list"})
+                    if (await ws.receive_json(timeout=3))["robots"][0]["online"]:
+                        break
+                    await asyncio.sleep(.02)
+            await ws.send_json({"type": "session.open", "robot_id": "car-01", "version": 1})
+            opened = await ws.receive_json(timeout=3)
+            self.assertEqual(opened["type"], "session.opened")
+            await ws.send_json({"type": "session.open", "robot_id": "car-01", "version": 1})
+            self.assertEqual((await ws.receive_json(timeout=3))["error"]["code"], "BUSY")
+
+            pc = RTCPeerConnection(RTCConfiguration(iceServers=[]))
+            async def close_peer():
+                # 对端先断开时，aiortc 的关闭可能已在另一个回调中进行。
+                with suppress(TimeoutError):
+                    await asyncio.wait_for(pc.close(), 2)
+
+            stack.push_async_callback(close_peer)
+            received_video = asyncio.Queue()
+            pc.on("track", received_video.put_nowait)
+            pc.addTransceiver(AudioStreamTrack(), direction="sendonly")
+            pc.addTransceiver("video", direction="recvonly")
+            channels, messages = {}, {}
+            for label, ordered in CHANNELS.items():
+                channel = pc.createDataChannel(label, ordered=ordered,
+                                               maxRetransmits=None if ordered else 0)
+                messages[label] = asyncio.Queue()
+                channel.on("message", messages[label].put_nowait)
+                channels[label] = channel
+
+            await pc.setLocalDescription(await pc.createOffer())
+            await ws.send_json({"type": "offer", "sid": opened["sid"],
+                                "sdp": pc.localDescription.sdp})
+            answer = await ws.receive_json(timeout=10)
+            await pc.setRemoteDescription(RTCSessionDescription(answer["sdp"], "answer"))
+            track = await asyncio.wait_for(received_video.get(), 5)
+            frame = await asyncio.wait_for(track.recv(), 8)
+            self.assertEqual((frame.width, frame.height), (640, 480))
+
+            async def message(label, predicate=lambda _: True):
+                async with asyncio.timeout(4):
+                    while True:
+                        msg = json.loads(await messages[label].get())
+                        if predicate(msg):
+                            return msg
+
+            next_id = 0
+
+            async def command(method, params, label="rpc.v1"):
+                nonlocal next_id
+                next_id += 1
+                channels[label].send(json.dumps({"method": method, "params": params, "id": next_id}))
+                return await message(label, lambda msg: msg["id"] == next_id)
+
+            # 等首帧期间可能已收到多帧遥测，驾控使用下一帧新 tick。
+            while not messages["state.v1"].empty():
+                messages["state.v1"].get_nowait()
+            state = await message("state.v1", lambda msg: msg["video"] == "live")
+            self.assertEqual(state["state"]["owner"], "")
+            self.assertEqual((await command("acquire", {"tick": 0}))["error"]["code"], "STALE")
+            state = await message("state.v1", lambda msg: msg["seq"] > state["seq"])
+            lease = await command("acquire", {"tick": state["tick"]})
+            epoch = lease["result"]["epoch"]
+            state = await message("state.v1", lambda msg: msg["epoch"] == epoch)
+            channels["drive.v1"].send(json.dumps({"epoch": epoch, "seq": 1, "tick": state["tick"],
+                                                "chassis": {"speed_m_s": .1}}))
+
+            async def robot_until(predicate):
+                async with asyncio.timeout(4):
+                    while True:
+                        s = await gateway.execute("get_state", {})
+                        if predicate(s):
+                            return s
+                        await asyncio.sleep(.02)
+
+            await robot_until(lambda s: not s["stopped"])
+            self.assertIn("result", await command("stop", {}, "stop.v1"))
+            await robot_until(lambda s: s["latched"] and s["stopped"] and not s["owner"])
+            state = await message("state.v1", lambda msg: msg["state"]["latched"])
+            self.assertIn("result", await command("acquire", {"tick": state["tick"], "clear_latch": True}))
+            self.assertIn("result", await command("talk.begin", {}))
+            async with asyncio.timeout(4):
+                while (await gateway.rpc("GetAudioState", pb.Empty())).received_frames == 0:
+                    await asyncio.sleep(.025)
+            self.assertIn("result", await command("talk.end", {}))
+            await message("state.v1", lambda msg: msg["talk"]["phase"] == "completed")
+            state = await message("state.v1", lambda msg: msg["epoch"])
+            renewed = await command("renew", {"tick": state["tick"], "epoch": state["epoch"]})
+            self.assertIn("result", renewed)
+            self.assertEqual((await gateway.execute("get_state", {}))["owner"], "wan/desktop")
+            await ws.close()
+            await robot_until(lambda s: not s["owner"] and s["stopped"])
+            async with http.ws_connect(url, headers={"Authorization": "Bearer operator"}) as second:
+                await second.send_json({"type": "robots.list"})
+                self.assertFalse((await second.receive_json(timeout=3))["robots"][0]["busy"])

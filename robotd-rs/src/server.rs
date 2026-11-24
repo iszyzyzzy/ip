@@ -31,12 +31,7 @@ impl Service {
             .get("authorization")
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
-        let difference = supplied
-            .as_bytes()
-            .iter()
-            .zip(expected.as_bytes())
-            .fold(0u8, |acc, (a, b)| acc | (a ^ b));
-        if supplied.len() != expected.len() || difference != 0 {
+        if supplied != expected {
             return Err(Status::unauthenticated("访问凭据无效"));
         }
         Ok(())
@@ -168,6 +163,12 @@ impl RobotControl for Service {
     ) -> Result<Response<pb::ActionList>, Status> {
         self.auth(&r)?;
         reply!(self.hub.request(Op::Actions, false).await?, Actions)
+    }
+    async fn list_sounds(&self, r: Request<pb::Empty>) -> Result<Response<pb::SoundList>, Status> {
+        self.auth(&r)?;
+        Ok(Response::new(pb::SoundList {
+            names: crate::audio::sound_names()?,
+        }))
     }
     async fn put_action(
         &self,

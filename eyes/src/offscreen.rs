@@ -20,10 +20,14 @@ mod tests {
         let (renderer, art) = Renderer::new(&root, [(192, 192); 2]).unwrap();
         let mut u = Uniforms::zero();
         u.viewport[3] = 1.;
-        u.background = [1., 0.945, 0.94, 1.];
+        u.background = [1., 0.945, 0.94, 0.];
+        u.shape[1] = 0.2;
+        u.extra[1] = 0.4;
         u.placement = art.placement_uniforms();
+        u.eye_bounds = art.eye_bounds;
+        u.expression_mix[0] = 1.;
         let happy = renderer.render(1, u, 0).unwrap();
-        u.background[3] = 2.;
+        u.expression_mix = [0., 1., 0., 0.];
         let excited = renderer.render(1, u, 0).unwrap();
         let other = renderer.render(0, u, 0).unwrap();
         assert!(happy.chunks_exact(4).filter(|p| p[0] < 128).count() > 100);
@@ -56,6 +60,35 @@ mod tests {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("captures");
         std::fs::create_dir_all(&dir).unwrap();
         preview.save(dir.join("excited-preview.png")).unwrap();
+
+        // 直接比较渲染像素，眼白摆放改变后符号也应落在同一个框内。
+        u.background = [0., 0., 0., 0.];
+        u.layers_a[3] = 1.;
+        u.left[2] = 1.;
+        u.placement[3][0] += 0.06;
+        u.expression_mix = [0.; 4];
+        let socket = renderer.render(0, u, 0).unwrap();
+        u.expression_mix[1] = 1.;
+        let symbol = renderer.render(0, u, 0).unwrap();
+        let bounds = |pixels: &[u8]| {
+            let mut b = [192i32, 192, 0, 0];
+            for (i, p) in pixels.chunks_exact(4).enumerate() {
+                if p[0].max(p[1]).max(p[2]) < 64 {
+                    continue;
+                }
+                let (x, y) = ((i % 192) as i32, (i / 192) as i32);
+                b = [b[0].min(x), b[1].min(y), b[2].max(x), b[3].max(y)];
+            }
+            b
+        };
+        let (a, b) = (bounds(&socket), bounds(&symbol));
+        assert!(
+            a[2] > a[0] && a.into_iter().zip(b).all(|(x, y)| (x - y).abs() <= 4),
+            "眼白 {a:?}，表情 {b:?}"
+        );
+        u.expression_mix[1] = 0.5;
+        let halfway = renderer.render(0, u, 0).unwrap();
+        assert!(halfway != symbol && halfway != socket);
     }
 
     #[test]

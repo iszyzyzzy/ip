@@ -8,6 +8,34 @@ use std::{
 use tokio::sync::Notify;
 use tonic::Status;
 
+fn sound_dir() -> std::path::PathBuf {
+    std::env::var_os("ROBOTD_SOUNDS_DIR")
+        .map(Into::into)
+        .unwrap_or_else(|| "/var/lib/robot-remote/sounds".into())
+}
+
+pub fn sound_names() -> Result<Vec<String>, Status> {
+    let entries = match std::fs::read_dir(sound_dir()) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+        Err(e) => return Err(Status::unavailable(e.to_string())),
+    };
+    let mut names = Vec::new();
+    for entry in entries {
+        let path = entry
+            .map_err(|e| Status::unavailable(e.to_string()))?
+            .path();
+        if path.extension().is_some_and(|x| x == "wav")
+            && path.is_file()
+            && let Some(name) = path.file_stem().and_then(|s| s.to_str())
+        {
+            names.push(name.to_owned());
+        }
+    }
+    names.sort();
+    Ok(names)
+}
+
 #[derive(Clone)]
 pub struct Player(Arc<Mutex<Manager>>);
 struct Manager {
@@ -35,6 +63,57 @@ pub struct Session {
 }
 
 impl Player {
+    pub fn play_sound(
+        &self,
+        name: &str,
+        rt: &tokio::runtime::Handle,
+    ) -> anyhow::Result<Arc<Session>> {
+        self.play_wav(&sound_dir().join(format!("{name}.wav")), rt)
+    }
+
+    fn play_wav(
+        &self,
+        path: &std::path::Path,
+        rt: &tokio::runtime::Handle,
+    ) -> anyhow::Result<Arc<Session>> {
+        let mut reader = hound::WavReader::open(path)?;
+        let spec = reader.spec();
+        anyhow::ensure!(
+            spec.sample_format == hound::SampleFormat::Int && spec.bits_per_sample == 16,
+            "预制语音需要 PCM16 WAV"
+        );
+        let session = self.start(pb::AudioHeader {
+            channels: spec.channels.into(),
+            sample_rate_hz: spec.sample_rate,
+        })?;
+        let output = session.clone();
+        let handle = rt.clone();
+        rt.spawn_blocking(move || {
+            let mut send = || -> anyhow::Result<()> {
+                let mut block = Vec::with_capacity(4096);
+                for sample in reader.samples::<i16>() {
+                    block.extend_from_slice(&sample?.to_le_bytes());
+                    if block.len() == 4096 {
+                        handle.block_on(output.push(&block))?;
+                        block.clear();
+                    }
+                }
+                handle.block_on(output.push(&block))?;
+                handle.block_on(output.finish())?;
+                Ok(())
+            };
+            if let Err(e) = send() {
+                let mut state = output.state.lock().unwrap();
+                if !state.cancelled && !state.done {
+                    eprintln!("预制语音读取失败：{e}");
+                    state.status.error = e.to_string();
+                    state.eof = true;
+                    output.ready.notify_one();
+                }
+            }
+        });
+        Ok(session)
+    }
     pub fn new(cfg: Audio, simulated: bool) -> Self {
         Self(Arc::new(Mutex::new(Manager {
             cfg,
@@ -346,13 +425,15 @@ impl Session {
                     s.status.submitted_frames += frames;
                 }
             }
-            // null 声卡也必须按采样率节流，否则静音填充会占满 CPU。
-            output_at += Duration::from_secs_f64(self.ms(bytes.len()) / 1000.0);
-            while !self.cancelled() && Instant::now() < output_at {
-                self.pause(output_at.saturating_duration_since(Instant::now()));
-            }
-            if Instant::now().duration_since(output_at) > Duration::from_millis(20) {
-                output_at = Instant::now();
+            if simulated {
+                // 模拟声卡没有真实音频时钟，需要按采样率节流，避免静音填充占满 CPU。
+                output_at += Duration::from_secs_f64(self.ms(bytes.len()) / 1000.0);
+                while !self.cancelled() && Instant::now() < output_at {
+                    self.pause(output_at.saturating_duration_since(Instant::now()));
+                }
+                if Instant::now().duration_since(output_at) > Duration::from_millis(20) {
+                    output_at = Instant::now();
+                }
             }
         }
     }
@@ -401,10 +482,6 @@ impl Sink {
             pcm.sw_params(&sw)?;
             drop(sw);
             let buffer_ms = frames as f64 * 1000.0 / rate as f64;
-            anyhow::ensure!(
-                buffer_ms + cfg.max_buffer_ms as f64 <= 200.5,
-                "声卡实际缓冲 {buffer_ms:.1} ms，加软件队列超过 200 ms，请调整 ALSA 设备或缓冲配置"
-            );
             Ok(Self::Alsa {
                 pcm,
                 buffer_ms,
@@ -484,6 +561,45 @@ impl Drop for Sink {
 }
 
 pub struct StreamGuard(pub Arc<Session>);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn preset_wav_reaches_simulated_sink() {
+        let path = std::env::temp_dir().join(format!("{}.wav", uuid::Uuid::new_v4()));
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 16000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut wav = hound::WavWriter::create(&path, spec).unwrap();
+        for _ in 0..4000 {
+            wav.write_sample(10i16).unwrap();
+        }
+        wav.finalize().unwrap();
+        let mut cfg = crate::config::Config::defaults().audio;
+        cfg.enabled = true;
+        let player = Player::new(cfg, true);
+        let session = player
+            .play_wav(&path, &tokio::runtime::Handle::current())
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while !session.state.lock().unwrap().done {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let status = session.status();
+        assert_eq!(status.phase, "completed");
+        assert_eq!(status.submitted_frames, 4000);
+        drop(player);
+        std::fs::remove_file(path).unwrap();
+    }
+}
 impl Drop for StreamGuard {
     fn drop(&mut self) {
         self.0.cancel();

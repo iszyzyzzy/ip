@@ -1,0 +1,225 @@
+:root {
+  --bg-deep: #030a18;
+  --bg-panel: rgba(6, 22, 50, 0.84);
+  --bg-card: rgba(9, 32, 72, 0.72);
+  --cyan: #00d8ff;
+  --cyan-bright: #67f3ff;
+  --blue-accent: #1d6fff;
+  --border-glow: rgba(0, 216, 255, 0.36);
+  --text-main: #dcf6ff;
+  --text-dim: #7ca8c9;
+  --ok: #18e69a;
+  --warn: #ffb020;
+  --danger: #ff3b53;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background-color: var(--bg-deep);
+  color: var(--text-main);
+  font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", system-ui, sans-serif;
+  user-select: none;
+}
+
+/* 传统监控大屏深蓝科技网格背景 */
+.dv-screen-bg {
+  background-color: var(--bg-deep);
+  background-image:
+    radial-gradient(ellipse at 50% 0%, rgba(16, 78, 168, 0.32), transparent 62%),
+    linear-gradient(rgba(0, 216, 255, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 216, 255, 0.055) 1px, transparent 1px);
+  background-size: 100% 100%, 36px 36px, 36px 36px;
+}
+
+.mono {
+  font-family: "Consolas", "JetBrains Mono", "Courier New", monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 传统大屏实体感蓝青渐变按钮 */
+.dv-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid rgba(0, 216, 255, 0.48);
+  border-radius: 3px;
+  background: linear-gradient(180deg, rgba(16, 68, 138, 0.92) 0%, rgba(6, 30, 74, 0.96) 100%);
+  color: #e6fbff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: inset 0 0 10px rgba(0, 216, 255, 0.16), 0 0 8px rgba(0, 140, 255, 0.16);
+  transition: all 0.14s ease;
+}
+
+.dv-btn:hover:not(:disabled) {
+  border-color: var(--cyan-bright);
+  background: linear-gradient(180deg, rgba(24, 98, 188, 0.96) 0%, rgba(10, 46, 108, 0.98) 100%);
+  box-shadow: inset 0 0 14px rgba(103, 243, 255, 0.28), 0 0 14px rgba(0, 216, 255, 0.35);
+}
+
+.dv-btn:active:not(:disabled),
+.dv-btn.active {
+  border-color: var(--cyan-bright);
+  background: linear-gradient(180deg, rgba(0, 174, 239, 0.82) 0%, rgba(0, 92, 165, 0.94) 100%);
+  color: #ffffff;
+  box-shadow: inset 0 0 16px rgba(255, 255, 255, 0.28), 0 0 16px rgba(0, 216, 255, 0.52);
+}
+
+.dv-btn:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+  filter: grayscale(0.4);
+}
+
+.dv-btn-sm {
+  padding: 4px 9px;
+  font-size: 12px;
+}
+
+.dv-btn-ok {
+  border-color: rgba(24, 230, 154, 0.72);
+  background: linear-gradient(180deg, rgba(13, 128, 86, 0.92) 0%, rgba(6, 58, 42, 0.96) 100%);
+  box-shadow: inset 0 0 12px rgba(24, 230, 154, 0.22), 0 0 10px rgba(24, 230, 154, 0.22);
+}
+
+.dv-btn-ok:hover:not(:disabled) {
+  border-color: #66ffca;
+  background: linear-gradient(180deg, rgba(20, 165, 112, 0.95) 0%, rgba(8, 76, 54, 0.98) 100%);
+}
+
+.dv-btn-warn {
+  border-color: rgba(255, 176, 32, 0.75);
+  background: linear-gradient(180deg, rgba(162, 102, 10, 0.92) 0%, rgba(82, 48, 4, 0.96) 100%);
+}
+
+.dv-btn-danger {
+  border-color: rgba(255, 68, 92, 0.85);
+  background: linear-gradient(180deg, rgba(196, 24, 48, 0.94) 0%, rgba(105, 8, 24, 0.98) 100%);
+  color: #fff5f6;
+  box-shadow: inset 0 0 14px rgba(255, 120, 136, 0.25), 0 0 14px rgba(255, 46, 67, 0.35);
+}
+
+.dv-btn-danger:hover:not(:disabled) {
+  border-color: #ff94a0;
+  background: linear-gradient(180deg, rgba(235, 32, 58, 0.98) 0%, rgba(138, 12, 32, 1) 100%);
+  box-shadow: inset 0 0 18px rgba(255, 150, 160, 0.4), 0 0 22px rgba(255, 46, 67, 0.6);
+}
+
+.dv-input,
+.dv-select {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid rgba(0, 216, 255, 0.38);
+  border-radius: 3px;
+  background: rgba(4, 15, 36, 0.92);
+  color: var(--text-main);
+  font-size: 13px;
+  outline: none;
+  user-select: text;
+}
+
+.dv-input:focus,
+.dv-select:focus {
+  border-color: var(--cyan-bright);
+  box-shadow: 0 0 8px rgba(0, 216, 255, 0.35);
+}
+
+.dv-card {
+  border: 1px solid rgba(0, 216, 255, 0.28);
+  background: var(--bg-card);
+  border-radius: 4px;
+  box-shadow: inset 0 0 16px rgba(0, 140, 255, 0.08);
+}
+
+.dv-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 6px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid rgba(0, 216, 255, 0.24);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--cyan-bright);
+  letter-spacing: 0.04em;
+}
+
+.dv-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 2px;
+  border: 1px solid rgba(0, 216, 255, 0.35);
+  background: rgba(0, 140, 255, 0.14);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.dv-pill.ok {
+  border-color: rgba(24, 230, 154, 0.55);
+  background: rgba(24, 230, 154, 0.14);
+  color: #7effcf;
+}
+
+.dv-pill.warn {
+  border-color: rgba(255, 176, 32, 0.65);
+  background: rgba(255, 176, 32, 0.16);
+  color: #ffd37d;
+}
+
+.dv-pill.danger {
+  border-color: rgba(255, 59, 83, 0.72);
+  background: rgba(255, 59, 83, 0.18);
+  color: #ff9ea9;
+}
+
+.dv-scroll {
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.dv-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.dv-scroll::-webkit-scrollbar-track {
+  background: rgba(3, 12, 30, 0.6);
+}
+
+.dv-scroll::-webkit-scrollbar-thumb {
+  background: rgba(0, 216, 255, 0.35);
+  border-radius: 3px;
+}
+
+.dv-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 216, 255, 0.65);
+}
+
+.pulse-danger {
+  animation: pulseDanger 1.2s infinite ease-in-out;
+}
+
+@keyframes pulseDanger {
+  0%, 100% {
+    box-shadow: 0 0 10px rgba(255, 46, 67, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 22px rgba(255, 46, 67, 0.85);
+  }
+}

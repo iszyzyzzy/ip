@@ -22,10 +22,7 @@ pub trait Devices: Send {
     fn stop_chassis(&mut self) -> Result<()>;
     fn zero(&mut self, mask: u8) -> Result<()>;
     fn chassis(&mut self, t: &pb::ChassisTarget) -> Result<()>;
-    fn waiting_for_reply(&self, _targets: &pb::Targets) -> bool {
-        false
-    }
-    fn poll(&mut self, start_arm_query: bool) -> Result<()>;
+    fn poll(&mut self) -> Result<()>;
     fn snapshot(&self) -> Value;
 }
 
@@ -74,7 +71,7 @@ impl Devices for Simulated {
         self.record("chassis", json!({"mode":t.mode,"data":chassis_payload(t)}));
         Ok(())
     }
-    fn poll(&mut self, _: bool) -> Result<()> {
+    fn poll(&mut self) -> Result<()> {
         Ok(())
     }
     fn snapshot(&self) -> Value {
@@ -284,6 +281,16 @@ impl Servo {
         ));
         Ok(())
     }
+    // 半双工总线写运动指令前，先把在途的位置查询回包收完，避免总线冲突。
+    fn finish_pending(&mut self) -> Result<Option<(usize, Value)>> {
+        while self.pending.is_some() {
+            if let Some(result) = self.poll()? {
+                return Ok(Some(result));
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        Ok(None)
+    }
     fn poll(&mut self) -> Result<Option<(usize, Value)>> {
         let Some((index, end, buf)) = &mut self.pending else {
             return Ok(None);
@@ -351,11 +358,7 @@ pub struct Hardware {
     rt: tokio::runtime::Handle,
     state: Value,
     times: HashMap<String, Instant>,
-    requested_mode: i32,
-    eye_cfg: ep::Config,
-    eye_pose: Option<ep::Pose>,
-    eye_expression: i32,
-    eye_revision: u64,
+    requested_mode: Option<i32>,
     next_neck: Instant,
     next_arm: Instant,
     next_eye: Instant,
@@ -363,7 +366,7 @@ pub struct Hardware {
 }
 impl Hardware {
     pub fn connect(cfg: Config, rt: tokio::runtime::Handle) -> Result<Self> {
-        let eye_cfg = serde_json::from_value(cfg.eyes.settings.clone())?;
+        let eye_cfg: ep::Config = serde_json::from_value(cfg.eyes.settings.clone())?;
         let mut h = Self {
             cfg,
             board: None,
@@ -372,11 +375,7 @@ impl Hardware {
             rt,
             state: json!({"chassis":{},"neck":{},"left_arm":{},"right_arm":{},"eyes":{}}),
             times: HashMap::new(),
-            requested_mode: 3,
-            eye_cfg,
-            eye_pose: None,
-            eye_expression: ep::Expression::Normal as i32,
-            eye_revision: 0,
+            requested_mode: None,
             next_neck: Instant::now(),
             next_arm: Instant::now(),
             next_eye: Instant::now(),
@@ -448,18 +447,12 @@ impl Hardware {
                 }
             })?;
             let mut eye = ep::eye_control_client::EyeControlClient::new(channel);
-            h.eye_revision =
-                h.rt.block_on(async {
-                    tokio::time::timeout(
-                        Duration::from_millis(300),
-                        eye.configure(h.eye_cfg.clone()),
-                    )
+            h.rt.block_on(async {
+                tokio::time::timeout(Duration::from_millis(300), eye.configure(eye_cfg.clone()))
                     .await
-                })??
-                .into_inner()
-                .revision;
-            if h.eye_cfg.mode == Some(ep::Mode::Ifacialmocap as i32)
-                && h.eye_cfg.phone_ip.as_ref().is_some_and(|ip| !ip.is_empty())
+            })??;
+            if eye_cfg.mode == Some(ep::Mode::Ifacialmocap as i32)
+                && eye_cfg.phone_ip.as_ref().is_some_and(|ip| !ip.is_empty())
             {
                 h.rt.block_on(async {
                     tokio::time::timeout(
@@ -473,8 +466,18 @@ impl Hardware {
         }
         h.begin()?;
         h.stop()?;
-        h.poll(true)?;
+        h.poll()?;
         Ok(h)
+    }
+    fn finish_arm_pending(&mut self, i: usize) -> Result<&mut Servo> {
+        let pending = self.arms[i]
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("手臂未连接"))?
+            .finish_pending()?;
+        if let Some((index, value)) = pending {
+            self.state[if i == 0 { "left_arm" } else { "right_arm" }][index.to_string()] = value;
+        }
+        Ok(self.arms[i].as_mut().unwrap())
     }
     fn board(&mut self) -> Result<&mut Bridge> {
         self.board
@@ -548,55 +551,45 @@ impl Devices for Hardware {
         }
         for (i, t) in [&t.left_arm, &t.right_arm].into_iter().enumerate() {
             if let Some(t) = t {
-                self.arms[i]
-                    .as_mut()
-                    .ok_or_else(|| anyhow::anyhow!("手臂未连接"))?
-                    .target(t)?;
+                self.finish_arm_pending(i)?.target(t)?;
             }
         }
         if let Some(target) = &t.servo {
-            self.arms[usize::from(target.right_arm)]
-                .as_mut()
-                .ok_or_else(|| anyhow::anyhow!("手臂未连接"))?
+            self.finish_arm_pending(usize::from(target.right_arm))?
                 .manual(target)?;
         }
-        if let Some(p) = &t.eyes {
-            let eye = self
-                .eye
-                .as_mut()
-                .ok_or_else(|| anyhow::anyhow!("眼屏未连接"))?;
-            self.eye_revision = self
-                .rt
-                .block_on(async {
-                    tokio::time::timeout(Duration::from_millis(300), eye.set_pose(*p)).await
-                })??
-                .into_inner()
-                .revision;
-            self.eye_cfg.mode = Some(ep::Mode::External as i32);
-            self.eye_pose = Some(*p);
-        }
-        if let Some(expression) = t.eye_expression {
-            let eye = self
-                .eye
-                .as_mut()
-                .ok_or_else(|| anyhow::anyhow!("眼屏未连接"))?;
-            self.rt.block_on(async {
-                tokio::time::timeout(
-                    Duration::from_millis(300),
-                    eye.set_expression(ep::ExpressionRequest { expression }),
-                )
-                .await
-            })??;
-            self.eye_expression = expression;
-        }
-        if let Some(b) = &t.blink {
-            let eye = self
-                .eye
-                .as_mut()
-                .ok_or_else(|| anyhow::anyhow!("眼屏未连接"))?;
-            self.rt.block_on(async {
-                tokio::time::timeout(Duration::from_millis(300), eye.trigger_blink(*b)).await
-            })??;
+        if t.eyes.is_some() || t.eye_expression.is_some() || t.blink.is_some() {
+            let result: Result<()> = (|| {
+                let eye = self
+                    .eye
+                    .as_mut()
+                    .ok_or_else(|| anyhow::anyhow!("眼屏未连接"))?;
+                if let Some(p) = &t.eyes {
+                    self.rt.block_on(async {
+                        tokio::time::timeout(Duration::from_millis(300), eye.set_pose(*p)).await
+                    })??;
+                }
+                if let Some(expression) = t.eye_expression {
+                    self.rt.block_on(async {
+                        tokio::time::timeout(
+                            Duration::from_millis(300),
+                            eye.set_expression(ep::ExpressionRequest { expression }),
+                        )
+                        .await
+                    })??;
+                }
+                if let Some(b) = &t.blink {
+                    self.rt.block_on(async {
+                        tokio::time::timeout(Duration::from_millis(300), eye.trigger_blink(*b))
+                            .await
+                    })??;
+                }
+                Ok(())
+            })();
+            if let Err(e) = result {
+                eprintln!("眼屏目标下发失败：{e}");
+                self.state["eyes"] = json!({"error": e.to_string()});
+            }
         }
         Ok(())
     }
@@ -606,10 +599,8 @@ impl Devices for Hardware {
             .eye
             .as_mut()
             .ok_or_else(|| anyhow::anyhow!("眼屏未连接"))?;
-        let revision = self.rt.block_on(async {
-            let reply =
-                tokio::time::timeout(Duration::from_millis(300), eye.configure(cfg.clone()))
-                    .await??;
+        self.rt.block_on(async {
+            tokio::time::timeout(Duration::from_millis(300), eye.configure(cfg)).await??;
             if connect_tracking {
                 tokio::time::timeout(
                     Duration::from_millis(300),
@@ -617,11 +608,8 @@ impl Devices for Hardware {
                 )
                 .await??;
             }
-            Ok::<_, anyhow::Error>(reply.into_inner().revision)
+            Ok::<_, anyhow::Error>(())
         })?;
-        self.eye_cfg = cfg;
-        self.eye_revision = revision;
-        self.eye_pose = None;
         Ok(())
     }
     fn stop(&mut self) -> Result<()> {
@@ -648,19 +636,16 @@ impl Devices for Hardware {
     }
     fn stop_chassis(&mut self) -> Result<()> {
         self.can(0x111, &[0; 8])?;
-        self.can(0x141, &[3])?;
-        self.requested_mode = 3;
-        self.times.remove("mode");
         Ok(())
     }
     fn zero(&mut self, mask: u8) -> Result<()> {
         self.board()?.motor_zero(mask)
     }
     fn chassis(&mut self, t: &pb::ChassisTarget) -> Result<()> {
-        if self.requested_mode != t.mode {
+        if self.requested_mode != Some(t.mode) {
             self.can(0x111, &[0; 8])?;
             self.can(0x141, &[t.mode as u8])?;
-            self.requested_mode = t.mode;
+            self.requested_mode = Some(t.mode);
             self.times.remove("mode");
         }
         let sys = &self.state["chassis"]["system"];
@@ -680,14 +665,7 @@ impl Devices for Hardware {
         self.state["chassis"]["ready"] = json!(ready);
         Ok(())
     }
-    fn waiting_for_reply(&self, targets: &pb::Targets) -> bool {
-        self.arms.iter().enumerate().any(|(i, arm)| {
-            let moving = [targets.left_arm.is_some(), targets.right_arm.is_some()][i]
-                || targets.servo.is_some_and(|s| usize::from(s.right_arm) == i);
-            moving && arm.as_ref().is_some_and(|a| a.pending.is_some())
-        })
-    }
-    fn poll(&mut self, start_arm_query: bool) -> Result<()> {
+    fn poll(&mut self) -> Result<()> {
         let now = Instant::now();
         if let Some(b) = &mut self.board {
             b.poll()?;
@@ -722,10 +700,7 @@ impl Devices for Hardware {
                     value;
             }
         }
-        if start_arm_query
-            && now >= self.next_arm
-            && self.arms.iter().flatten().all(|a| a.pending.is_none())
-        {
+        if now >= self.next_arm && self.arms.iter().flatten().all(|a| a.pending.is_none()) {
             let items: Vec<_> = self
                 .arms
                 .iter()
@@ -743,37 +718,20 @@ impl Devices for Hardware {
         if let Some(eye) = &mut self.eye
             && now >= self.next_eye
         {
-            self.rt.block_on(async {
-                let s =
+            let result: Result<ep::State> = self.rt.block_on(async {
+                Ok(
                     tokio::time::timeout(Duration::from_millis(300), eye.get_state(ep::Empty {}))
                         .await??
-                        .into_inner();
-                if s.config.as_ref() != Some(&self.eye_cfg) || s.revision < self.eye_revision {
-                    tokio::time::timeout(
-                        Duration::from_millis(300),
-                        eye.configure(self.eye_cfg.clone()),
-                    )
-                    .await??;
-                    if let Some(p) = &self.eye_pose {
-                        self.eye_revision =
-                            tokio::time::timeout(Duration::from_millis(300), eye.set_pose(*p))
-                                .await??
-                                .into_inner()
-                                .revision;
-                    }
+                        .into_inner(),
+                )
+            });
+            match result {
+                Ok(s) => self.state["eyes"] = serde_json::to_value(s)?,
+                Err(e) => {
+                    eprintln!("眼屏状态查询失败：{e}");
+                    self.state["eyes"] = json!({"error": e.to_string()});
                 }
-                if s.expression != self.eye_expression {
-                    tokio::time::timeout(
-                        Duration::from_millis(300),
-                        eye.set_expression(ep::ExpressionRequest {
-                            expression: self.eye_expression,
-                        }),
-                    )
-                    .await??;
-                }
-                self.state["eyes"] = serde_json::to_value(s)?;
-                Ok::<_, anyhow::Error>(())
-            })?;
+            }
             self.next_eye = now + Duration::from_millis(500);
         }
         Ok(())

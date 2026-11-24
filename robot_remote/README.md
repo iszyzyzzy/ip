@@ -231,3 +231,10 @@ python -m build --wheel --no-isolation
 ```
 
 测试使用实际本机 HTTP/WebSocket/gRPC 连接和模拟设备，覆盖凭据、来源、配置版本冲突、目标校验、独占控制权、租约/底盘 TTL、断线/退出释放、动作以及后端离线恢复。
+## 音响与实时喊话
+
+将 PCM16 WAV 放在遥控服务的 `$STATE_DIRECTORY/sounds/`，未设置时使用服务用户的 `~/.config/robot-remote/sounds/`。文件名会出现在网页音响栏；刷新网页即可看到新文件。操作员可以播放、停止预制音频，或点击“开始喊话”，授权麦克风后实时送声，再点“结束喊话”关闭麦克风。网页进入后台也会结束喊话。
+
+手机麦克风需要受信任的 HTTPS。给服务设置 `ROBOT_REMOTE_TLS_CERT` 和 `ROBOT_REMOTE_TLS_KEY` 后，同一网关会额外监听 HTTPS 8443，可用 `ROBOT_REMOTE_TLS_PORT` 调整。证书的备用名称须包含访问地址。使用本地 CA 时，需要先在操作设备上信任其公开证书。HTTP 8080 可播放预制音频。
+
+预制播放和喊话都走 robotd 的 `PlayAudio` 和同一个声卡。网页通过 `GET /api/audio/presets` 获取音频名，通过 `POST /api/audio/presets/{name}` 播放。喊话使用独立的 `/talk` WebSocket，首条 JSON 携带 `token`，收到 `ready` 后发送 48 kHz 单声道 PCM16LE 二进制帧，文本 `end` 表示结束并播放尾音。
