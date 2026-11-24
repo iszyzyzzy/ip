@@ -4,8 +4,9 @@ import base64
 from email.utils import formatdate
 import hashlib
 import hmac
+import json
 import os
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 
 def required(name):
@@ -59,3 +60,30 @@ async def xfyun(client, text):
                 yield base64.b64decode(data["audio"])
             if data["status"] == 2:
                 return
+
+
+async def doubao(client, text):
+    voice = os.getenv("DOUBAO_VOICE") or "multi_female_tuanzi_v3_uranus_bigtts"
+    url = f"https://voice.cn-beijing.volces.com/api/v3/text-to-speech/{quote(voice, safe='')}/streaming"
+    body = {"text": text, "model_id": "doubao-seed-tts-3.0",
+            "output_format": {"format": "pcm", "sample_rate": 24000}}
+    async with client.post(url, json=body, headers={"X-Api-Key": required("DOUBAO_API_KEY")},
+                           read_bufsize=1024 * 1024) as response:
+        async for line in response.content:
+            if not line.strip():
+                continue
+            if response.status >= 400 and not line.lstrip().startswith(b"{"):
+                response.raise_for_status()
+            event = json.loads(line)
+            if event.get("error"):
+                error = event["error"]
+                raise ValueError(f"豆包 {error.get('code', response.status)}：{error.get('message', '')}")
+            response.raise_for_status()
+            if event["event"] == "audio":
+                pcm = base64.b64decode(event["audio"])
+                for offset in range(0, len(pcm), 4096):
+                    yield pcm[offset:offset + 4096]
+            elif event["event"] == "final" and event.get("reason") == "TTS_STREAM_FINAL_REASON_CLOSED":
+                return
+        response.raise_for_status()
+        raise RuntimeError("豆包合成流提前结束")

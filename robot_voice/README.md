@@ -22,7 +22,7 @@ DEEPSEEK_MODEL=deepseek-flash
 
 凭据文件由 root 持有，权限 0600。修改后运行 `sudo systemctl restart robot-voice`。用 `journalctl -u robot-voice -f -o cat` 查看每轮识别文本、模型回答、播放完成或失败阶段。
 
-桌面客户端的「AI 对话 → 合成后端」可选择车载本地、DeepSeek 或讯飞，选择会保存在当前客户端。识别仍在车上完成，远程合成只发送回答文本，返回的 PCM 按句流入车端混音器。DeepSeek 复用现有的 `DEEPSEEK_API_KEY`，可用 `DEEPSEEK_TTS_VOICE` 指定 stella 或 tide。讯飞需在车端 `/etc/robot-voice.env` 配置下列变量，发音人应已在该应用开通。修改后重启 robot-voice。安装服务时将 remote_tts.py 放在 service.py 同目录。
+桌面客户端的「AI 对话 → 合成后端」可选择车载本地、DeepSeek、豆包 TTS 3.0 或讯飞，选择会保存在当前客户端。识别仍在车上完成，远程合成只发送回答文本，返回的 PCM 按句流入车端混音器。DeepSeek 复用现有的 `DEEPSEEK_API_KEY`，可用 `DEEPSEEK_TTS_VOICE` 指定 stella 或 tide。讯飞需在车端 `/etc/robot-voice.env` 配置下列变量，发音人应已在该应用开通。修改后重启 robot-voice。安装服务时将 remote_tts.py 放在 service.py 同目录。
 
 ```ini
 XFYUN_APP_ID=
@@ -30,3 +30,5 @@ XFYUN_API_KEY=
 XFYUN_API_SECRET=
 XFYUN_VOICE=xiaoyan
 ```
+
+豆包 TTS 3.0 使用车端的 `DOUBAO_API_KEY`，默认音色为团子（`multi_female_tuanzi_v3_uranus_bigtts`），可通过 `DOUBAO_VOICE` 指定账号已开通的音色。讯飞免费版使用同一接口，`XFYUN_VOICE` 填当前应用已开通的发音人。
