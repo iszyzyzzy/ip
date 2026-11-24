@@ -64,6 +64,8 @@ async def playback(client, ws, hello, rate):
 def create_app(models):
     model, voice = load_models(models)
     mandarin = PaddleVoice(models)
+    remote = {"deepseek": (remote_tts.deepseek, 24000), "xfyun": (remote_tts.xfyun, 16000),
+              "doubao": (remote_tts.doubao, 24000)}
     turns = itertools.count(1)
     lock = asyncio.Lock()
 
@@ -81,8 +83,10 @@ def create_app(models):
             try:
                 hello = await ws.receive_json(timeout=5)
                 backend = hello.get("tts") or "local"
-                if backend not in ("local", "deepseek", "xfyun"):
+                if backend != "local" and backend not in remote:
                     raise ValueError("未知的语音合成后端")
+                if backend == "doubao":
+                    remote_tts.required("DOUBAO_API_KEY")
                 if backend == "xfyun":
                     for name in ("XFYUN_APP_ID", "XFYUN_API_KEY", "XFYUN_API_SECRET"):
                         remote_tts.required(name)
@@ -128,13 +132,13 @@ def create_app(models):
                     log.info("轮次=%s 回答=%s", turn, answer)
                     await ws.send_json({"answer": answer})
                     stage = "合成播放"
-                    rate = {"local": voice.sample_rate, "deepseek": 24000, "xfyun": 16000}[backend]
+                    rate = voice.sample_rate if backend == "local" else remote[backend][1]
                     async with playback(client, ws, hello, rate) as speaker:
                         for sentence in re.split(r"(?<=[。！？!?])", answer):
                             if not sentence.strip():
                                 continue
                             if backend != "local":
-                                synthesize = remote_tts.deepseek if backend == "deepseek" else remote_tts.xfyun
+                                synthesize = remote[backend][0]
                                 received = False
                                 async for pcm in synthesize(client, sentence):
                                     await speaker.send_bytes(pcm)

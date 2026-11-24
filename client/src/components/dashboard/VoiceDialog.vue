@@ -97,7 +97,7 @@ onBeforeUnmount(reset)
   <dialog ref="dialog" @close="reset">
     <header><strong>AI 语音对话</strong><button class="dv-btn dv-btn-sm" @click="dialog?.close()">关闭</button></header>
     <label>合成后端 <select v-model="backend" class="dv-input" :disabled="stage !== 'idle'"
-      @change="localStorageSave"><option value="local">车载本地</option><option value="deepseek">DeepSeek</option><option value="xfyun">讯飞</option></select></label>
+      @change="localStorageSave"><option value="local">车载本地</option><option value="deepseek">DeepSeek</option><option value="doubao">豆包 TTS 3.0</option><option value="xfyun">讯飞</option></select></label>
     <p v-if="question"><b>我</b>　{{ question }}</p>
     <p v-if="answer"><b>机器人</b>　{{ answer }}</p>
     <p v-if="error" role="alert">{{ error }}</p>
